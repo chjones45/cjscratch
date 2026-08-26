@@ -1,0 +1,26 @@
+DocumentFormat.OpenXml SDK - Third-Party Notice
+================================================
+
+These assemblies are Microsoft's official Open XML SDK for .NET, used here to
+generate DOCX reports directly (no Pandoc, no Microsoft Word installation, and
+no admin rights required to load them).
+
+Source:  https://www.nuget.org/packages/DocumentFormat.OpenXml
+         https://www.nuget.org/packages/DocumentFormat.OpenXml.Framework
+         https://www.nuget.org/packages/System.IO.Packaging
+Project: https://github.com/dotnet/Open-XML-SDK
+License: MIT (see https://github.com/dotnet/Open-XML-SDK/blob/main/LICENSE)
+Version: 3.5.1 (DocumentFormat.OpenXml / DocumentFormat.OpenXml.Framework)
+         10.0.11 (System.IO.Packaging)
+
+Layout:
+  Lib\OpenXml\Desktop\  - net46 build, used under Windows PowerShell 5.1
+                          (.NET Framework). Relies on the built-in WindowsBase
+                          assembly already present on every Windows machine.
+  Lib\OpenXml\Core\     - net8.0 build, used under PowerShell 7+ (.NET).
+                          Includes System.IO.Packaging.dll because .NET does
+                          not ship the WindowsBase packaging APIs.
+
+These DLLs are loaded in-process via Add-Type. They are not installed,
+registered, or added to PSModulePath, and do not require administrative
+rights or Microsoft Word to be present on the machine.
