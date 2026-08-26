@@ -4954,7 +4954,8 @@ function Get-StorageGridNodeAttributeDetails {
 
     # Restrict attribute lookups to appliance nodes (Platform == "SGA") when topology data is available.
     $applianceNodeIds = New-Object System.Collections.Generic.HashSet[string]
-    if ($null -ne $NetworkTopologyData) {
+    $topologyAvailable = ($null -ne $NetworkTopologyData)
+    if ($topologyAvailable) {
         $gridNodesRaw = Convert-ToArrayPayload -Payload (Get-PropertyValue -Object $NetworkTopologyData -PropertyName "gridNodes")
         foreach ($gridNode in @($gridNodesRaw)) {
             $cfg = Get-PropertyValue -Object $gridNode -PropertyName "nodeConfig"
@@ -4967,6 +4968,14 @@ function Get-StorageGridNodeAttributeDetails {
             }
         }
         Write-Host "[NodeAttr] Found $($applianceNodeIds.Count) SGA appliance nodes in topology"
+        if ($applianceNodeIds.Count -eq 0) {
+            Write-Host "[NodeAttr] No SGA appliance nodes found (software-based grid); skipping node attribute queries"
+            return [pscustomobject][ordered]@{
+                available      = $false
+                attributeCodes = $attributeCodes
+                nodes          = [object[]]@()
+            }
+        }
     }
 
     $ssmIdByNodeId = @{}
@@ -4986,7 +4995,7 @@ function Get-StorageGridNodeAttributeDetails {
         Write-Host "[NodeAttr] Found $($serviceEntries.Count) service entries total"
 
         foreach ($serviceEntry in $serviceEntries) {
-            if ($applianceNodeIds.Count -gt 0 -and -not $applianceNodeIds.Contains($serviceEntry.NodeId)) {
+            if ($topologyAvailable -and -not $applianceNodeIds.Contains($serviceEntry.NodeId)) {
                 continue
             }
 
