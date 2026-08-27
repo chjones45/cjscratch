@@ -460,8 +460,9 @@ $santricityApplianceCandidates = @()
 $santricityCollectionResults = @()
 Import-Module (Join-Path -Path $WorkspaceRoot -ChildPath 'Modules\AsBuilt.Common.psm1') -Force
 # ChangeLog:
+# 2026.08.27.1 - Moved detailed node-attribute and private API diagnostics to verbose output, made the response type diagnostic null-safe, and report completion of the StorageGRID DOCX before prompting for, or collecting, SANtricity appliance reports.
 # 2026.08.26.1 - Replaced Pandoc-based DOCX generation with a direct DocumentFormat.OpenXml SDK pipeline (Lib\OpenXml); no external DOCX conversion binary is required. Fixed title-page section header/footer/titlePg preservation and single-column table parsing, added selective hyperlink support for markdown [text](url) content, and removed all Pandoc-related code and dependencies.
-$ScriptVersion = "2026.08.26.1"
+$ScriptVersion = "2026.08.27.1"
 
 if (-not $PSBoundParameters.ContainsKey('CleanupIntermediateOutputs')) {
     $CleanupIntermediateOutputs = $true
@@ -4966,12 +4967,12 @@ function Get-StorageGridNodeAttributeDetails {
                 }
             }
         }
-        Write-Host "[NodeAttr] Found $($applianceNodeIds.Count) SGA appliance nodes in topology"
+        Write-Verbose "[NodeAttr] Found $($applianceNodeIds.Count) SGA appliance nodes in topology"
     }
 
     $ssmIdByNodeId = @{}
     if ($null -ne $ServiceIdsData) {
-        Write-Host "[NodeAttr] Processing service IDs ..."
+        Write-Verbose "[NodeAttr] Processing service IDs ..."
         $serviceEntries = @()
         if ($ServiceIdsData -is [System.Collections.IDictionary]) {
             foreach ($key in $ServiceIdsData.Keys) {
@@ -4983,7 +4984,7 @@ function Get-StorageGridNodeAttributeDetails {
                 $serviceEntries += [pscustomobject]@{ NodeId = [string]$prop.Name; NodeEntry = $prop.Value }
             }
         }
-        Write-Host "[NodeAttr] Found $($serviceEntries.Count) service entries total"
+        Write-Verbose "[NodeAttr] Found $($serviceEntries.Count) service entries total"
 
         foreach ($serviceEntry in $serviceEntries) {
             if ($applianceNodeIds.Count -gt 0 -and -not $applianceNodeIds.Contains($serviceEntry.NodeId)) {
@@ -4996,12 +4997,12 @@ function Get-StorageGridNodeAttributeDetails {
                 $ssmId = [string](Get-PropertyValue -Object $service -PropertyName "id")
                 if (-not [string]::IsNullOrWhiteSpace($ssmId)) {
                     $ssmIdByNodeId[$serviceEntry.NodeId] = $ssmId
-                    Write-Host "[NodeAttr] Found SSM service for node $($serviceEntry.NodeId): $ssmId"
+                    Write-Verbose "[NodeAttr] Found SSM service for node $($serviceEntry.NodeId): $ssmId"
                 }
                 break
             }
         }
-        Write-Host "[NodeAttr] Total SSM nodes to query: $($ssmIdByNodeId.Count)"
+        Write-Verbose "[NodeAttr] Total SSM nodes to query: $($ssmIdByNodeId.Count)"
     }
 
     $nodeRows = @()
@@ -5009,10 +5010,11 @@ function Get-StorageGridNodeAttributeDetails {
         $ssmId = $ssmIdByNodeId[$nodeId]
         $nodeInfo = Resolve-StorageGridNodeMetricLabel -LabelValue $nodeId -NodeHealth $NodeHealth
 
-        Write-Host "Querying /private/attributes/$attributeQuery/node/$ssmId ..."
+        Write-Verbose "Querying /private/attributes/$attributeQuery/node/$ssmId ..."
         $response = Invoke-StorageGridApi -BaseUrl $BaseUrl -Endpoint "/private/attributes/$attributeQuery/node/$ssmId" -BearerToken $BearerToken
-        
-        Write-Host "[NodeAttr] Response Failed: $($response.Failed), Data type: $($response.Data.GetType().FullName), Data is null: $($null -eq $response.Data)"
+
+        $dataType = if ($null -eq $response.Data) { "<null>" } else { $response.Data.GetType().FullName }
+        Write-Verbose "[NodeAttr] Response Failed: $($response.Failed), Data type: $dataType, Data is null: $($null -eq $response.Data)"
 
         $computeSerial = "N/A"
         $bmcIp = "N/A"
@@ -5028,7 +5030,7 @@ function Get-StorageGridNodeAttributeDetails {
 
         if (-not $response.Failed) {
             $attributeItems = Convert-ToArrayPayload -Payload $response.Data
-            Write-Host "[NodeAttr]   Attribute items count: $(@($attributeItems).Count)"
+            Write-Verbose "[NodeAttr]   Attribute items count: $(@($attributeItems).Count)"
             foreach ($attributeItem in @($attributeItems)) {
                 $code = [string](Get-PropertyValue -Object $attributeItem -PropertyName "code")
                 $value = [string](Get-PropertyValue -Object $attributeItem -PropertyName "value")
@@ -5047,10 +5049,10 @@ function Get-StorageGridNodeAttributeDetails {
                     "SAIQ" { $controllerBIp = $value }
                 }
             }
-            Write-Host "[NodeAttr]   Collected: model=$applianceModel, controllerAIp=$controllerAIp, controllerBIp=$controllerBIp"
+            Write-Verbose "[NodeAttr]   Collected: model=$applianceModel, controllerAIp=$controllerAIp, controllerBIp=$controllerBIp"
         }
         else {
-            Write-Host "[NodeAttr]   Response failed: $($response.Message)"
+            Write-Verbose "[NodeAttr]   Response failed: $($response.Message)"
         }
 
         $nodeRows += [pscustomobject][ordered]@{
@@ -5070,7 +5072,7 @@ function Get-StorageGridNodeAttributeDetails {
             shelfIds       = [object[]]@($shelfIds)
         }
     }
-    Write-Host "[NodeAttr] Total rows collected: $($nodeRows.Count)"
+    Write-Verbose "[NodeAttr] Total rows collected: $($nodeRows.Count)"
 
     return [pscustomobject][ordered]@{
         available      = [bool]($nodeRows.Count -gt 0)
@@ -6007,6 +6009,8 @@ Set-DocxMetadataProperties -DocxPath $docxPath -Title $docxMetaTitle -Subject $d
 
 Set-DocxTableStyle -DocxPath $docxPath -TableStyleId $DocxTableStyleName -HeaderParagraphStyle $DocxTableHeaderParagraphStyle -BodyParagraphStyle $DocxTableBodyParagraphStyle -AutofitToWindow ([bool]$DocxTableAutofitToWindow)
 
+Write-Host "StorageGRID DOCX report generated at: $docxPath"
+
 if ($santricityApplianceCandidates.Count -gt 0 -and $santricityDetectionEnabled) {
     $shouldCollectSantricity = $santricityCollectionRequested
     if (-not $collectSantricitySpecified) {
@@ -6075,8 +6079,6 @@ if ($CleanupIntermediateOutputs -and -not $KeepIntermediateOutputs) {
         Remove-Item -Path $pathsToRemove -Force -ErrorAction SilentlyContinue
     }
 }
-
-Write-Host "DOCX report generated at: $docxPath"
 
 }
 

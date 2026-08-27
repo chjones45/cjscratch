@@ -41,6 +41,16 @@ StorageGRID does not use the `-Port` parameter; custom StorageGRID ports belong 
 
 Use `-Credential` for secure authentication; otherwise live collection prompts for credentials.
 
+### Verbose Diagnostics
+
+Use PowerShell's common `-Verbose` parameter when troubleshooting a collection:
+
+```powershell
+.\collect_asbuilt.ps1 -Platform StorageGRID -Target "sg-admin-node.example.com" -Verbose
+```
+
+Normal output shows authentication, high-level collection progress, report generation, output paths, and actionable warnings or failures. Detailed API and appliance-attribute diagnostics, including requests for data that is unavailable on a particular node, are suppressed by default and are shown with `-Verbose`.
+
 ## StorageGRID SANtricity Appliances
 
 StorageGRID collection can identify eligible appliance nodes with embedded E-Series/SANtricity controllers and also genenerate individual as-built documents for eligibe nodes.
@@ -57,10 +67,11 @@ StorageGRID collection can identify eligible appliance nodes with embedded E-Ser
 The interactive workflow is:
 
 1. Detect eligible appliances.
-2. Generate the StorageGRID Markdown and DOCX reports.
-3. Ask whether SANtricity reports should be generated.
-4. Ask whether one credential should be reused or credentials should be entered per SANtricty login.
-5. Collect each appliance independently and continue after failures.
+2. Generate and finalize the StorageGRID Markdown and DOCX reports.
+3. Announce the completed StorageGRID DOCX path.
+4. Ask whether SANtricity reports should be generated.
+5. Ask whether one credential should be reused or credentials should be entered per SANtricity login.
+6. Collect each appliance independently and continue after failures.
 
 Individual prompts identify each node and show progress:
 
