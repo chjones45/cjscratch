@@ -460,9 +460,10 @@ $santricityApplianceCandidates = @()
 $santricityCollectionResults = @()
 Import-Module (Join-Path -Path $WorkspaceRoot -ChildPath 'Modules\AsBuilt.Common.psm1') -Force
 # ChangeLog:
+# 2026.08.27.2 - Added Multi-Admin Verification (MAV) support: collects /grid/mav-configuration, /grid/mav-requests, and /grid/mav-requests-history and reports them in a new Multi-Admin Verification subsection at the end of Configuration - Access Control, with pending/history requests mapped back to ILM policy names and requester full names, and a version-gated note for grids older than StorageGRID 12.1.
 # 2026.08.27.1 - Moved detailed node-attribute and private API diagnostics to verbose output, made the response type diagnostic null-safe, and report completion of the StorageGRID DOCX before prompting for, or collecting, SANtricity appliance reports.
 # 2026.08.26.1 - Replaced Pandoc-based DOCX generation with a direct DocumentFormat.OpenXml SDK pipeline (Lib\OpenXml); no external DOCX conversion binary is required. Fixed title-page section header/footer/titlePg preservation and single-column table parsing, added selective hyperlink support for markdown [text](url) content, and removed all Pandoc-related code and dependencies.
-$ScriptVersion = "2026.08.27.1"
+$ScriptVersion = "2026.08.27.2"
 
 if (-not $PSBoundParameters.ContainsKey('CleanupIntermediateOutputs')) {
     $CleanupIntermediateOutputs = $true
@@ -1073,6 +1074,31 @@ function Get-ExceptionMessageChain {
     return ($messages -join " | ")
 }
 
+function Test-StorageGridMinimumVersion {
+    param(
+        [Parameter(Mandatory = $false)][string]$VersionString,
+        [Parameter(Mandatory = $true)][int]$MinimumMajor,
+        [Parameter(Mandatory = $true)][int]$MinimumMinor
+    )
+
+    if ([string]::IsNullOrWhiteSpace($VersionString)) {
+        return $false
+    }
+
+    $match = [regex]::Match($VersionString, '^(\d+)\.(\d+)')
+    if (-not $match.Success) {
+        return $false
+    }
+
+    $major = [int]$match.Groups[1].Value
+    $minor = [int]$match.Groups[2].Value
+
+    if ($major -ne $MinimumMajor) {
+        return $major -gt $MinimumMajor
+    }
+    return $minor -ge $MinimumMinor
+}
+
 function Get-PropertyValue {
     param(
         [Parameter(Mandatory = $false)]$Object,
@@ -1482,6 +1508,9 @@ function Write-StorageGridMarkdown {
     $gridAccounts       = @((Get-PropertyValue -Object $facts -PropertyName "sg_grid_accounts"))
     $gridAccountUsage   = @((Get-PropertyValue -Object $facts -PropertyName "sg_grid_account_usage"))
     $gridFederationConnections = Convert-ToArrayPayload -Payload (Get-PropertyValue -Object $facts -PropertyName "sg_grid_federation")
+    $mavConfiguration   = Get-PropertyValue -Object $facts -PropertyName "sg_mav_configuration"
+    $mavRequests        = Convert-ToArrayPayload -Payload (Get-PropertyValue -Object $facts -PropertyName "sg_mav_requests")
+    $mavRequestsHistory = Convert-ToArrayPayload -Payload (Get-PropertyValue -Object $facts -PropertyName "sg_mav_requests_history")
     $boolText = {
         param($Value)
         if ($null -eq $Value) { return "N/A" }
@@ -2878,6 +2907,152 @@ function Write-StorageGridMarkdown {
         )
     }
     Add-MarkdownTable -LineBuffer $markdownLines -Headers @("Full Name", "Unique Name", "Federated", "Disabled", "Grid Groups") -Rows $userRows
+
+    # --- Multi-Admin Verification ---
+    $markdownLines.Add("")
+    $markdownLines.Add("## Multi-Admin Verification")
+    $markdownLines.Add("")
+    $markdownLines.Add("Multi-admin verification (MAV) reduces the risk of a single compromised or malicious admin account making a high-impact change by requiring approval from one or more additional admins before certain sensitive Grid Manager operations take effect. When MAV is enabled for an operation, submitting a request (for example, activating a new ILM policy) creates a pending change that must be approved by other authorized admins before StorageGRID applies it; email notifications are sent to the configured recipients whenever a request is created, approved, or denied.")
+    $markdownLines.Add("")
+    $markdownLines.Add("**Note:** Multi-admin verification is only supported beginning with StorageGRID 12.1. On earlier grid versions the APIs used to populate this section do not exist, so the tables below show N/A.")
+    $markdownLines.Add("")
+
+    $mavSupported = Test-StorageGridMinimumVersion -VersionString $softwareVersion -MinimumMajor 12 -MinimumMinor 1
+    if (-not $mavSupported) {
+        $mavVersionDisplay = if ([string]::IsNullOrWhiteSpace($softwareVersion)) { "unknown" } else { $softwareVersion }
+        $markdownLines.Add("This grid is running StorageGRID $mavVersionDisplay, which does not support multi-admin verification, so the tables below show N/A.")
+        $markdownLines.Add("")
+    }
+    $mergeMarker = Get-AsBuiltTableMergeMarker
+
+    $ilmPolicyNameById = @{}
+    foreach ($policy in $ilmPolicies) {
+        $policyId = [string](Get-PropertyValue -Object $policy -PropertyName "id")
+        if ([string]::IsNullOrWhiteSpace($policyId)) { continue }
+        $ilmPolicyNameById[$policyId] = [string](Get-PropertyValue -Object $policy -PropertyName "name")
+    }
+
+    $mavRequestRowBuilder = {
+        param($request)
+
+        $operationTypeRaw = [string](Get-PropertyValue -Object $request -PropertyName "operationType")
+        $operationDisplay = "N/A"
+        if (-not [string]::IsNullOrWhiteSpace($operationTypeRaw)) {
+            $words = @(($operationTypeRaw -replace "-", " ") -split " " | ForEach-Object {
+                if ($_.Length -gt 0) { $_.Substring(0, 1).ToUpperInvariant() + $_.Substring(1) } else { $_ }
+            })
+            $operationDisplay = $words -join " "
+        }
+
+        $requestedByObj = Get-PropertyValue -Object $request -PropertyName "requestedBy"
+        $requestedByName = [string](Get-PropertyValue -Object $requestedByObj -PropertyName "fullName")
+        if ([string]::IsNullOrWhiteSpace($requestedByName)) {
+            $requestedByName = [string](Get-PropertyValue -Object $requestedByObj -PropertyName "userId")
+        }
+
+        $originalRequest = Get-PropertyValue -Object $request -PropertyName "originalRequest"
+        $originalBody = @((Get-PropertyValue -Object $originalRequest -PropertyName "body"))
+        $policyNames = @()
+        foreach ($bodyItem in $originalBody) {
+            $policyId = [string](Get-PropertyValue -Object $bodyItem -PropertyName "policyId")
+            if ([string]::IsNullOrWhiteSpace($policyId)) { continue }
+            if ($ilmPolicyNameById.ContainsKey($policyId)) {
+                $policyNames += [string]$ilmPolicyNameById[$policyId]
+            } else {
+                $policyNames += $policyId
+            }
+        }
+        $policyDisplay = if ($policyNames.Count -gt 0) { ($policyNames | Sort-Object -Unique) -join ", " } else { "N/A" }
+
+        $approvalItems = @((Get-PropertyValue -Object $request -PropertyName "approvals"))
+        $approvalTexts = @()
+        foreach ($approval in $approvalItems) {
+            $approverName = [string](Get-PropertyValue -Object $approval -PropertyName "fullName")
+            if ([string]::IsNullOrWhiteSpace($approverName)) {
+                $approverName = [string](Get-PropertyValue -Object $approval -PropertyName "userId")
+            }
+            if ([string]::IsNullOrWhiteSpace($approverName)) { continue }
+            $state = [string](Get-PropertyValue -Object $approval -PropertyName "state")
+            $time = [string](Get-PropertyValue -Object $approval -PropertyName "time")
+            $detailParts = @()
+            if (-not [string]::IsNullOrWhiteSpace($state)) { $detailParts += $state }
+            if (-not [string]::IsNullOrWhiteSpace($time)) { $detailParts += $time }
+            $approvalTexts += if ($detailParts.Count -gt 0) { "$approverName ($($detailParts -join ', '))" } else { $approverName }
+        }
+        $approvalsDisplay = if ($approvalTexts.Count -gt 0) { $approvalTexts -join "`n" } else { "None yet" }
+
+        return ,@(
+            (& $boolText (Get-PropertyValue -Object $request -PropertyName "creationTime")),
+            [string]$operationDisplay,
+            (& $boolText $requestedByName),
+            (& $boolText (Get-PropertyValue -Object $request -PropertyName "status")),
+            [string]$policyDisplay,
+            [string]$approvalsDisplay
+        )
+    }
+
+    # --- MAV Configuration ---
+    $markdownLines.Add("### MAV Configuration")
+    $markdownLines.Add("")
+    $markdownLines.Add("This table shows whether MAV is enabled overall, the email address MAV notifications are sent from, and every recipient email address that is notified when a request is created, approved, or denied.")
+    $markdownLines.Add("")
+
+    $mavEnabledValue  = Get-PropertyValue -Object $mavConfiguration -PropertyName "mavEnabled"
+    $mavSenderEmail   = Get-PropertyValue -Object $mavConfiguration -PropertyName "mavSenderEmail"
+    $mavRecipients    = @(@((Get-PropertyValue -Object $mavConfiguration -PropertyName "mavRecipientEmails")) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+
+    $mavConfigRows = @()
+    if ($mavRecipients.Count -eq 0) {
+        $mavConfigRows += ,@((& $boolText $mavEnabledValue), (& $boolText $mavSenderEmail), "N/A")
+    } else {
+        for ($i = 0; $i -lt $mavRecipients.Count; $i++) {
+            if ($i -eq 0) {
+                $mavConfigRows += ,@((& $boolText $mavEnabledValue), (& $boolText $mavSenderEmail), [string]$mavRecipients[$i])
+            } else {
+                $mavConfigRows += ,@($mergeMarker, $mergeMarker, [string]$mavRecipients[$i])
+            }
+        }
+    }
+    Add-MarkdownTable -LineBuffer $markdownLines -Headers @("MAV Enabled", "Sender Email", "Recipient Email") -Rows $mavConfigRows
+
+    $markdownLines.Add("")
+    $markdownLines.Add("This table shows each operation that can be individually placed under MAV control and whether it currently requires multi-admin approval.")
+    $markdownLines.Add("")
+
+    $mavOperationRows = @()
+    foreach ($operation in @((Get-PropertyValue -Object $mavConfiguration -PropertyName "operations"))) {
+        $mavOperationRows += ,@(
+            (& $boolText (Get-PropertyValue -Object $operation -PropertyName "name")),
+            (& $boolText (Get-PropertyValue -Object $operation -PropertyName "enabled"))
+        )
+    }
+    Add-MarkdownTable -LineBuffer $markdownLines -Headers @("Operation", "Enabled") -Rows $mavOperationRows
+
+    # --- Pending MAV Requests ---
+    $markdownLines.Add("")
+    $markdownLines.Add("### Pending Multi-Admin Verification Requests")
+    $markdownLines.Add("")
+    $markdownLines.Add("This table shows requests that are awaiting approval or denial from another admin before StorageGRID applies them.")
+    $markdownLines.Add("")
+
+    $pendingMavRows = @()
+    foreach ($request in $mavRequests) {
+        $pendingMavRows += , (& $mavRequestRowBuilder $request)
+    }
+    Add-MarkdownTable -LineBuffer $markdownLines -Headers @("Operation Time", "Operation Type", "Requested By", "Status", "Policy", "Approvals") -Rows $pendingMavRows
+
+    # --- MAV Request History ---
+    $markdownLines.Add("")
+    $markdownLines.Add("### Multi-Admin Verification Request History")
+    $markdownLines.Add("")
+    $markdownLines.Add("This table shows the history of MAV requests that have already been approved, denied, or have expired.")
+    $markdownLines.Add("")
+
+    $mavHistoryRows = @()
+    foreach ($request in $mavRequestsHistory) {
+        $mavHistoryRows += , (& $mavRequestRowBuilder $request)
+    }
+    Add-MarkdownTable -LineBuffer $markdownLines -Headers @("Operation Time", "Operation Type", "Requested By", "Status", "Policy", "Approvals") -Rows $mavHistoryRows
 
     # --- Configuration - Monitoring and Logging ---
     $markdownLines.Add("")
@@ -5669,6 +5844,9 @@ $endpointMap = @(
     @{ Key = "ilm_policy_tags";           Endpoint = "/grid/ilm-policy-tags" },
     @{ Key = "ec_profiles";               Endpoint = "/grid/ec-profiles" },
     @{ Key = "grid_accounts";             Endpoint = "/grid/accounts" },
+    @{ Key = "mav_configuration";         Endpoint = "/grid/mav-configuration" },
+    @{ Key = "mav_requests";              Endpoint = "/grid/mav-requests?my-request=false" },
+    @{ Key = "mav_requests_history";      Endpoint = "/grid/mav-requests-history?my-request=false" },
 
     # --- Private API endpoints ---
     @{ Key = "grid_config";               Endpoint = "/private/grid-config" },
@@ -5829,7 +6007,9 @@ $arrayPayloadKeys = @(
     "external_load_balancers",
     "firewall_blocked_ports",
     "domain_names",
-    "grid_federation"
+    "grid_federation",
+    "mav_requests",
+    "mav_requests_history"
 )
 
 foreach ($arrayKey in $arrayPayloadKeys) {
@@ -5905,6 +6085,9 @@ $asbuiltExport = [ordered]@{
         sg_grid_federation          = Get-ResponseData -Responses $responses -Key "grid_federation"      -AsArray
         sg_grid_accounts            = Get-ResponseData -Responses $responses -Key "grid_accounts"        -AsArray
         sg_grid_account_usage       = [object[]]@($accountUsageList)
+        sg_mav_configuration        = Get-ResponseData -Responses $responses -Key "mav_configuration"
+        sg_mav_requests             = Get-ResponseData -Responses $responses -Key "mav_requests"          -AsArray
+        sg_mav_requests_history     = Get-ResponseData -Responses $responses -Key "mav_requests_history"  -AsArray
     }
 }
 

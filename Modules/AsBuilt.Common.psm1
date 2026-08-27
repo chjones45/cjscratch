@@ -1,5 +1,19 @@
 Set-StrictMode -Version Latest
 
+# ChangeLog:
+# 2026.08.27.1 - Added vertical cell-merge (w:vMerge) support to the markdown-to-docx table renderer, driven by an invisible-marker convention (Get-AsBuiltTableMergeMarker), for the StorageGRID MAV Configuration table.
+$script:AsBuiltCommonModuleVersion = "2026.08.27.1"
+
+# Invisible-separator marker (U+2063): placed in a table cell to signal that the docx renderer
+# should vertically merge that cell with the one above it, instead of repeating the same value.
+$script:AsBuiltTableMergeMarker = [string][char]0x2063
+
+function Get-AsBuiltTableMergeMarker {
+    [CmdletBinding()]
+    param()
+    return $script:AsBuiltTableMergeMarker
+}
+
 function Initialize-AsBuiltPath {
     [CmdletBinding()]
     param([Parameter(Mandatory = $true)][string]$Path)
@@ -252,16 +266,49 @@ function ConvertTo-AsBuiltDocxTableXml {
     }
 
     $columnCount = $rows[0].Count
+
+    # Pre-pass: cells containing the merge marker (data rows only, never the header row) are
+    # "continue" merges; the nearest preceding non-marker cell in that column becomes "restart".
+    $mergeMarker = $script:AsBuiltTableMergeMarker
+    $mergeTypes = New-Object 'string[,]' $rows.Count, $columnCount
+    $lastNonMergedRowByColumn = New-Object 'int[]' $columnCount
+    for ($col = 0; $col -lt $columnCount; $col++) { $lastNonMergedRowByColumn[$col] = -1 }
+
+    for ($rowIndex = 1; $rowIndex -lt $rows.Count; $rowIndex++) {
+        for ($col = 0; $col -lt $columnCount; $col++) {
+            if ($col -lt $rows[$rowIndex].Count -and $rows[$rowIndex][$col] -eq $mergeMarker) {
+                $mergeTypes[$rowIndex, $col] = 'continue'
+                $anchorRow = $lastNonMergedRowByColumn[$col]
+                $anchorMergeType = if ($anchorRow -ge 0) { $mergeTypes[$anchorRow, $col] } else { 'n/a' }
+                if ($anchorRow -ge 0 -and [string]::IsNullOrEmpty($anchorMergeType)) {
+                    $mergeTypes[$anchorRow, $col] = 'restart'
+                }
+            }
+            else {
+                $lastNonMergedRowByColumn[$col] = $rowIndex
+            }
+        }
+    }
+
     $gridColumnsXml = ('<w:gridCol/>' * $columnCount) -join ''
 
     $tableXml = New-Object System.Text.StringBuilder
     [void]$tableXml.Append('<w:tbl xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:tblPr><w:tblStyle w:val="TableGrid"/><w:tblW w:w="5000" w:type="pct"/></w:tblPr><w:tblGrid>' + $gridColumnsXml + '</w:tblGrid>')
 
-    foreach ($row in $rows) {
+    for ($rowIndex = 0; $rowIndex -lt $rows.Count; $rowIndex++) {
         [void]$tableXml.Append('<w:tr>')
-        foreach ($cell in $row) {
-            $runsXml = ConvertTo-AsBuiltDocxRunsXml -Text $cell
-            [void]$tableXml.Append('<w:tc><w:tcPr><w:tcW w:w="0" w:type="auto"/></w:tcPr><w:p>' + $runsXml + '</w:p></w:tc>')
+        $row = $rows[$rowIndex]
+        for ($col = 0; $col -lt $columnCount; $col++) {
+            $cell = if ($col -lt $row.Count) { $row[$col] } else { '' }
+            $mergeType = $mergeTypes[$rowIndex, $col]
+            $vMergeXml = switch ($mergeType) {
+                'restart'  { '<w:vMerge w:val="restart"/>' }
+                'continue' { '<w:vMerge/>' }
+                default    { '' }
+            }
+            $cellText = if ($mergeType -eq 'continue') { '' } else { $cell }
+            $runsXml = ConvertTo-AsBuiltDocxRunsXml -Text $cellText
+            [void]$tableXml.Append('<w:tc><w:tcPr><w:tcW w:w="0" w:type="auto"/>' + $vMergeXml + '</w:tcPr><w:p>' + $runsXml + '</w:p></w:tc>')
         }
         [void]$tableXml.Append('</w:tr>')
     }
@@ -512,5 +559,6 @@ Export-ModuleMember -Function @(
     'ConvertTo-AsBuiltArray',
     'New-AsBuiltSettings',
     'Initialize-AsBuiltOpenXmlAssemblies',
-    'Convert-AsBuiltMarkdownToDocx'
+    'Convert-AsBuiltMarkdownToDocx',
+    'Get-AsBuiltTableMergeMarker'
 )
