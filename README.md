@@ -51,6 +51,17 @@ Use PowerShell's common `-Verbose` parameter when troubleshooting a collection:
 
 Normal output shows authentication, high-level collection progress, report generation, output paths, and actionable warnings or failures. Detailed API and appliance-attribute diagnostics, including requests for data that is unavailable on a particular node, are suppressed by default and are shown with `-Verbose`.
 
+## Output Reports
+
+The output as-built documents are created in the locations below.
+
+- StorageGRID: `.\asbuilt_output_storagegrid`
+- E-Series: `.\asbuilt_output_eseries`
+
+Use `-KeepIntermediateOutputs` when troubleshooting or retaining source JSON/Markdown. Otherwise successful reports clean intermediate files according to the effective cleanup setting.
+
+Once generated, open the report(s) and refresh the table of contents (TOC) to complete it's generation. A placeholder TOC is generated that must be manually updated and does not automatically refresh. This decision was made as refreshing the TOC triggers a safety warning in Microsoft Word that may cause confusion when opening the report for the first time (this is a default Word action in these circumstances and not due to safety concerns with the reports).
+
 ## StorageGRID SANtricity Appliances
 
 StorageGRID collection can identify eligible appliance nodes with embedded E-Series/SANtricity controllers and also genenerate individual as-built documents for eligibe nodes.
@@ -155,17 +166,11 @@ The directory also contains `santricity-collection-summary.json`, including node
 
 Both platforms support DOCX formatting and title-page parameters including `-EnableDocxToc`, `-DocxEnableTitlePage`, `-CustomerName`, `-CustomerLocation`, and `-ProjectName`.
 
-## Output Defaults
-
-- StorageGRID: `.\asbuilt_output_storagegrid`
-- E-Series: `.\asbuilt_output_eseries`
-- DOCX support files: `.\docx`
-
-Use `-KeepIntermediateOutputs` when troubleshooting or retaining source JSON/Markdown. Otherwise successful reports clean intermediate files according to the effective cleanup setting.
-
 ## Support Files
 
-- `docx\reference-template.docx`
-- `docx\report-metadata-storagegrid.yml`
-- `docx\report-metadata-e-series.yml`
+These files are required for successful creation of the as-built reports. Do not modify these files unless instructed.
+
+- `docx\reference-template.docx` - template input Word Document to supply the title page and styles.
+- `docx\report-metadata-storagegrid.yml` - defaults for the report metadata for StorageGRID As-Built reports
+- `docx\report-metadata-e-series.yml` - defaults for the report metadata for E-Series As-Built reports
 - `Lib\OpenXml\Desktop\` and `Lib\OpenXml\Core\` - the DocumentFormat.OpenXml SDK assemblies used to generate DOCX reports (see `Lib\OpenXml\OPENXML-SDK-NOTICE.txt`). No installation, PSGallery access, or admin rights are required; the script loads them in-process with `Add-Type`.

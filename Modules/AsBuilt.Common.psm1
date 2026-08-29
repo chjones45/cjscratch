@@ -1,8 +1,9 @@
 Set-StrictMode -Version Latest
 
 # ChangeLog:
+# 2026.08.29.1 - Set word/settings.xml UpdateFieldsOnOpen to false in Convert-AsBuiltMarkdownToDocx (via reflection, for Windows PowerShell 5.1 compatibility) so DOCPROPERTY/TOC fields no longer silently recalculate on open.
 # 2026.08.27.1 - Added vertical cell-merge (w:vMerge) support to the markdown-to-docx table renderer, driven by an invisible-marker convention (Get-AsBuiltTableMergeMarker), for the StorageGRID MAV Configuration table.
-$script:AsBuiltCommonModuleVersion = "2026.08.27.1"
+$script:AsBuiltCommonModuleVersion = "2026.08.29.1"
 
 # Invisible-separator marker (U+2063): placed in a table cell to signal that the docx renderer
 # should vertically merge that cell with the one above it, instead of repeating the same value.
@@ -536,6 +537,31 @@ function Convert-AsBuiltMarkdownToDocx {
         }
 
         Resolve-AsBuiltDocxHyperlinkPlaceholders -Body $body -MainDocumentPart $mainPart
+
+        # Trial: force fields (DOCPROPERTY/TOC) to NOT auto-recalculate on open, matching the
+        # OOXML-spec default behavior for an omitted <w:updateFields> element (see
+        # DocumentFormat.OpenXml.Wordprocessing.UpdateFieldsOnOpen), made explicit here rather
+        # than relying on the reference template to omit it.
+        # Reflection is used for the generic OpenXml SDK calls below because the
+        # `$obj.Method[Type]()` explicit-generic-argument syntax is not valid in Windows
+        # PowerShell 5.1 (it parses as an array indexer and throws a parser error).
+        $settingsPart = $mainPart.DocumentSettingsPart
+        if ($null -eq $settingsPart) {
+            $addNewPartMethod = $mainPart.GetType().GetMethods() |
+                Where-Object { $_.Name -eq 'AddNewPart' -and $_.IsGenericMethodDefinition -and $_.GetParameters().Count -eq 0 } |
+                Select-Object -First 1
+            $settingsPart = $addNewPartMethod.MakeGenericMethod([DocumentFormat.OpenXml.Packaging.DocumentSettingsPart]).Invoke($mainPart, $null)
+            $settingsPart.Settings = [DocumentFormat.OpenXml.Wordprocessing.Settings]::new()
+        }
+        $settings = $settingsPart.Settings
+        $getFirstChildMethod = $settings.GetType().GetMethod('GetFirstChild', [Type[]]@())
+        $updateFieldsOnOpen = $getFirstChildMethod.MakeGenericMethod([DocumentFormat.OpenXml.Wordprocessing.UpdateFieldsOnOpen]).Invoke($settings, $null)
+        if ($null -eq $updateFieldsOnOpen) {
+            $updateFieldsOnOpen = [DocumentFormat.OpenXml.Wordprocessing.UpdateFieldsOnOpen]::new()
+            $settings.PrependChild($updateFieldsOnOpen) | Out-Null
+        }
+        $updateFieldsOnOpen.Val = $false
+        $settings.Save()
 
         $mainPart.Document.Save()
     }

@@ -460,10 +460,11 @@ $santricityApplianceCandidates = @()
 $santricityCollectionResults = @()
 Import-Module (Join-Path -Path $WorkspaceRoot -ChildPath 'Modules\AsBuilt.Common.psm1') -Force
 # ChangeLog:
+# 2026.08.29.1 - Removed the stale w:dirty flag and added cached placeholder text on the TOC field so Word no longer prompts to update fields on open; relies on AsBuilt.Common.psm1 2026.08.29.1 for the accompanying UpdateFieldsOnOpen=false setting.
 # 2026.08.27.2 - Added Multi-Admin Verification (MAV) support: collects /grid/mav-configuration, /grid/mav-requests, and /grid/mav-requests-history and reports them in a new Multi-Admin Verification subsection at the end of Configuration - Access Control, with pending/history requests mapped back to ILM policy names and requester full names, and a version-gated note for grids older than StorageGRID 12.1.
 # 2026.08.27.1 - Moved detailed node-attribute and private API diagnostics to verbose output, made the response type diagnostic null-safe, and report completion of the StorageGRID DOCX before prompting for, or collecting, SANtricity appliance reports.
 # 2026.08.26.1 - Replaced Pandoc-based DOCX generation with a direct DocumentFormat.OpenXml SDK pipeline (Lib\OpenXml); no external DOCX conversion binary is required. Fixed title-page section header/footer/titlePg preservation and single-column table parsing, added selective hyperlink support for markdown [text](url) content, and removed all Pandoc-related code and dependencies.
-$ScriptVersion = "2026.08.27.2"
+$ScriptVersion = "2026.08.29.1"
 
 if (-not $PSBoundParameters.ContainsKey('CleanupIntermediateOutputs')) {
     $CleanupIntermediateOutputs = $true
@@ -1866,7 +1867,7 @@ function Write-StorageGridMarkdown {
         if ($EnableDocxToc) {
             $markdownLines.Add('```{=openxml}')
             & $emitOpenXmlParagraph -StyleId "TOCHeading" -Text $reportMetadata["toc-title"]
-            $markdownLines.Add('<w:p><w:r><w:fldChar w:fldCharType="begin" w:dirty="true"/><w:instrText xml:space="preserve">TOC \o "1-' + $DocxTocDepth + '" \h \z \u</w:instrText><w:fldChar w:fldCharType="separate"/><w:fldChar w:fldCharType="end"/></w:r></w:p>')
+            $markdownLines.Add('<w:p><w:r><w:fldChar w:fldCharType="begin"/><w:instrText xml:space="preserve">TOC \o "1-' + $DocxTocDepth + '" \h \z \u</w:instrText><w:fldChar w:fldCharType="separate"/><w:t xml:space="preserve">Right-click and select Update Field to generate the table of contents.</w:t><w:fldChar w:fldCharType="end"/></w:r></w:p>')
             $markdownLines.Add('<w:p><w:r><w:br w:type="page"/></w:r></w:p>')
             $markdownLines.Add('```')
             $markdownLines.Add("")
