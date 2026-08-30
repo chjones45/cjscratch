@@ -50,7 +50,17 @@ $ErrorActionPreference = 'Stop'
 
 $moduleName = if ($Platform -eq 'StorageGRID') { 'AsBuilt.StorageGrid.psm1' } else { 'AsBuilt.ESeries.psm1' }
 $commandName = if ($Platform -eq 'StorageGRID') { 'Invoke-StorageGridAsBuilt' } else { 'Invoke-ESeriesAsBuilt' }
-Import-Module (Join-Path -Path $PSScriptRoot -ChildPath "Modules\$moduleName") -Force
+$modulePath = Join-Path -Path $PSScriptRoot -ChildPath "Modules\$moduleName"
+if (-not (Test-Path -LiteralPath $modulePath -PathType Leaf)) {
+    throw "The required $Platform module was not found at '$modulePath'. Re-extract the complete distribution package."
+}
+
+try {
+    Import-Module $modulePath -Force -ErrorAction Stop
+}
+catch {
+    throw "Failed to load the $Platform module from '$modulePath': $($_.Exception.Message) Restore the module and its dependencies from the distribution package."
+}
 
 $commonParameterNames = @(
     'Target',
@@ -102,4 +112,11 @@ foreach ($parameterName in @($commonParameterNames + $platformParameterNames)) {
     }
 }
 
-& $commandName @invokeParameters
+try {
+    & $commandName @invokeParameters
+}
+catch {
+    Write-Error "As-built collection for $Platform did not complete: $($_.Exception.Message)"
+    Write-Error 'Correct the reported problem and run the collection again. Use -Verbose for additional diagnostics.'
+    exit 1
+}

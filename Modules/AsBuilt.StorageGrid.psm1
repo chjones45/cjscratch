@@ -460,11 +460,12 @@ $santricityApplianceCandidates = @()
 $santricityCollectionResults = @()
 Import-Module (Join-Path -Path $WorkspaceRoot -ChildPath 'Modules\AsBuilt.Common.psm1') -Force
 # ChangeLog:
+# 2026.08.31.1 - Added actionable validation for JSON input and title-page JSON, and report-write failures now name the affected output path; collect_asbuilt.ps1 reports uncaught collection errors at the command boundary.
 # 2026.08.29.1 - Removed the stale w:dirty flag and added cached placeholder text on the TOC field so Word no longer prompts to update fields on open; relies on AsBuilt.Common.psm1 2026.08.29.1 for the accompanying UpdateFieldsOnOpen=false setting.
 # 2026.08.27.2 - Added Multi-Admin Verification (MAV) support: collects /grid/mav-configuration, /grid/mav-requests, and /grid/mav-requests-history and reports them in a new Multi-Admin Verification subsection at the end of Configuration - Access Control, with pending/history requests mapped back to ILM policy names and requester full names, and a version-gated note for grids older than StorageGRID 12.1.
 # 2026.08.27.1 - Moved detailed node-attribute and private API diagnostics to verbose output, made the response type diagnostic null-safe, and report completion of the StorageGRID DOCX before prompting for, or collecting, SANtricity appliance reports.
 # 2026.08.26.1 - Replaced Pandoc-based DOCX generation with a direct DocumentFormat.OpenXml SDK pipeline (Lib\OpenXml); no external DOCX conversion binary is required. Fixed title-page section header/footer/titlePg preservation and single-column table parsing, added selective hyperlink support for markdown [text](url) content, and removed all Pandoc-related code and dependencies.
-$ScriptVersion = "2026.08.29.1"
+$ScriptVersion = "2026.08.31.1"
 
 if (-not $PSBoundParameters.ContainsKey('CleanupIntermediateOutputs')) {
     $CleanupIntermediateOutputs = $true
@@ -4719,7 +4720,12 @@ function Write-StorageGridMarkdown {
         Add-MarkdownTable -LineBuffer $markdownLines -Headers @("API Endpoint", "Response Code", "Detail") -Rows $apiFailureRows
     }
 
-    [System.IO.File]::WriteAllLines($OutputPath, [string[]]$markdownLines)
+    try {
+        [System.IO.File]::WriteAllLines($OutputPath, [string[]]$markdownLines)
+    }
+    catch {
+        throw "Failed to write the StorageGRID markdown report to '$OutputPath': $($_.Exception.Message) Verify that the output directory exists, is writable, and the file is not open in another application."
+    }
 }
 
 function ConvertTo-Hashtable {
@@ -5739,8 +5745,16 @@ if ($null -eq $TitlePageFields) {
 }
 
 if (-not [string]::IsNullOrWhiteSpace($TitlePageFieldsJson)) {
-    $parsed = ConvertFrom-Json -InputObject $TitlePageFieldsJson -ErrorAction Stop
+    try {
+        $parsed = ConvertFrom-Json -InputObject $TitlePageFieldsJson -ErrorAction Stop
+    }
+    catch {
+        throw "TitlePageFieldsJson is not valid JSON: $($_.Exception.Message) Supply a JSON object that maps field names to values."
+    }
     $parsedFields = ConvertTo-Hashtable -InputObject $parsed
+    if ($parsedFields.Count -eq 0) {
+        throw 'TitlePageFieldsJson must contain a JSON object with one or more field/value pairs.'
+    }
     foreach ($k in $parsedFields.Keys) {
         $TitlePageFields[$k] = $parsedFields[$k]
     }
@@ -5775,7 +5789,19 @@ if ($isJsonInputMode) {
         throw "JSON input file not found: $JsonInputPath"
     }
     Write-Host "JSON input mode: loading data from $jsonResolvedInput"
-    $asbuiltExport = Get-Content -Path $jsonResolvedInput -Raw | ConvertFrom-Json -ErrorAction Stop
+    try {
+        $jsonText = Get-Content -LiteralPath $jsonResolvedInput -Raw -ErrorAction Stop
+        if ([string]::IsNullOrWhiteSpace($jsonText)) {
+            throw 'The file is empty.'
+        }
+        $asbuiltExport = ConvertFrom-Json -InputObject $jsonText -ErrorAction Stop
+    }
+    catch {
+        throw "Failed to load StorageGRID JSON input '$jsonResolvedInput': $($_.Exception.Message) Supply a non-empty JSON export created by this tool."
+    }
+    if ($null -eq $asbuiltExport -or $null -eq $asbuiltExport.PSObject.Properties['storagegrid_facts']) {
+        throw "JSON input does not contain StorageGRID collection data (missing 'storagegrid_facts'): $JsonInputPath"
+    }
     $restQueryFailures = @()
     $apiUrl = "(loaded from $([System.IO.Path]::GetFileName($jsonResolvedInput)))"
 

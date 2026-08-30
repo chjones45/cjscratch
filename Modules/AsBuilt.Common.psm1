@@ -1,9 +1,10 @@
 Set-StrictMode -Version Latest
 
 # ChangeLog:
+# 2026.08.31.1 - Added validation and actionable failures for missing, incompatible, or blocked OpenXML SDK assemblies.
 # 2026.08.29.1 - Set word/settings.xml UpdateFieldsOnOpen to false in Convert-AsBuiltMarkdownToDocx (via reflection, for Windows PowerShell 5.1 compatibility) so DOCPROPERTY/TOC fields no longer silently recalculate on open.
 # 2026.08.27.1 - Added vertical cell-merge (w:vMerge) support to the markdown-to-docx table renderer, driven by an invisible-marker convention (Get-AsBuiltTableMergeMarker), for the StorageGRID MAV Configuration table.
-$script:AsBuiltCommonModuleVersion = "2026.08.29.1"
+$script:AsBuiltCommonModuleVersion = "2026.08.31.1"
 
 # Invisible-separator marker (U+2063): placed in a table cell to signal that the docx renderer
 # should vertically merge that cell with the one above it, instead of repeating the same value.
@@ -163,15 +164,32 @@ function Initialize-AsBuiltOpenXmlAssemblies {
         throw "OpenXML SDK assemblies not found at '$libDir'. Re-extract the distribution package so the Lib\OpenXml folder sits alongside collect_asbuilt.ps1."
     }
 
-    if ($editionFolder -eq 'Desktop') {
-        Add-Type -AssemblyName WindowsBase
-    }
-    else {
-        Add-Type -Path (Join-Path -Path $libDir -ChildPath 'System.IO.Packaging.dll')
+    $requiredAssemblyNames = @('DocumentFormat.OpenXml.Framework.dll', 'DocumentFormat.OpenXml.dll')
+    if ($editionFolder -eq 'Core') {
+        $requiredAssemblyNames += 'System.IO.Packaging.dll'
     }
 
-    Add-Type -Path (Join-Path -Path $libDir -ChildPath 'DocumentFormat.OpenXml.Framework.dll')
-    Add-Type -Path (Join-Path -Path $libDir -ChildPath 'DocumentFormat.OpenXml.dll')
+    foreach ($assemblyName in $requiredAssemblyNames) {
+        $assemblyPath = Join-Path -Path $libDir -ChildPath $assemblyName
+        if (-not (Test-Path -LiteralPath $assemblyPath -PathType Leaf)) {
+            throw "Required OpenXML assembly '$assemblyName' was not found in '$libDir'. Re-extract the complete Lib\OpenXml folder for PowerShell $($PSVersionTable.PSEdition)."
+        }
+    }
+
+    try {
+        if ($editionFolder -eq 'Desktop') {
+            Add-Type -AssemblyName WindowsBase
+        }
+        else {
+            Add-Type -Path (Join-Path -Path $libDir -ChildPath 'System.IO.Packaging.dll')
+        }
+
+        Add-Type -Path (Join-Path -Path $libDir -ChildPath 'DocumentFormat.OpenXml.Framework.dll')
+        Add-Type -Path (Join-Path -Path $libDir -ChildPath 'DocumentFormat.OpenXml.dll')
+    }
+    catch {
+        throw "Failed to load OpenXML SDK assemblies from '$libDir': $($_.Exception.Message) Re-extract the complete Lib\OpenXml\$editionFolder folder and ensure the DLLs are not blocked by Windows."
+    }
 
     $script:AsBuiltOpenXmlAssembliesLoaded = $true
 }
