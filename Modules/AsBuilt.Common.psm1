@@ -1,10 +1,11 @@
 Set-StrictMode -Version Latest
 
 # ChangeLog:
+# 2026.09.01.1 - Added the generated-document Subtle Emphasis paragraph style used for StorageGRID Multi-Admin Verification version notices.
 # 2026.08.31.1 - Added validation and actionable failures for missing, incompatible, or blocked OpenXML SDK assemblies.
 # 2026.08.29.1 - Set word/settings.xml UpdateFieldsOnOpen to false in Convert-AsBuiltMarkdownToDocx (via reflection, for Windows PowerShell 5.1 compatibility) so DOCPROPERTY/TOC fields no longer silently recalculate on open.
 # 2026.08.27.1 - Added vertical cell-merge (w:vMerge) support to the markdown-to-docx table renderer, driven by an invisible-marker convention (Get-AsBuiltTableMergeMarker), for the StorageGRID MAV Configuration table.
-$script:AsBuiltCommonModuleVersion = "2026.08.31.1"
+$script:AsBuiltCommonModuleVersion = "2026.09.01.1"
 
 # Invisible-separator marker (U+2063): placed in a table cell to signal that the docx renderer
 # should vertically merge that cell with the one above it, instead of repeating the same value.
@@ -454,6 +455,26 @@ function Resolve-AsBuiltDocxHyperlinkPlaceholders {
     }
 }
 
+function Ensure-AsBuiltDocxSubtleEmphasisStyle {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)]$MainDocumentPart)
+
+    $styleDefinitionsPart = $MainDocumentPart.StyleDefinitionsPart
+    if ($null -eq $styleDefinitionsPart -or $null -eq $styleDefinitionsPart.Styles) {
+        return
+    }
+
+    foreach ($style in @($styleDefinitionsPart.Styles.ChildElements)) {
+        if ($style -is [DocumentFormat.OpenXml.Wordprocessing.Style] -and [string]$style.StyleId.Value -eq 'SubtleEmphasis') {
+            return
+        }
+    }
+
+    $styleXml = '<w:style xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" w:type="paragraph" w:styleId="SubtleEmphasis"><w:name w:val="Subtle Emphasis"/><w:basedOn w:val="Normal"/><w:rPr><w:i/><w:color w:val="7F7F7F"/></w:rPr></w:style>'
+    $styleDefinitionsPart.Styles.AppendChild([DocumentFormat.OpenXml.Wordprocessing.Style]::new($styleXml)) | Out-Null
+    $styleDefinitionsPart.Styles.Save()
+}
+
 function Convert-AsBuiltMarkdownToDocx {
     [CmdletBinding()]
     param(
@@ -555,6 +576,7 @@ function Convert-AsBuiltMarkdownToDocx {
         }
 
         Resolve-AsBuiltDocxHyperlinkPlaceholders -Body $body -MainDocumentPart $mainPart
+    Ensure-AsBuiltDocxSubtleEmphasisStyle -MainDocumentPart $mainPart
 
         # Trial: force fields (DOCPROPERTY/TOC) to NOT auto-recalculate on open, matching the
         # OOXML-spec default behavior for an omitted <w:updateFields> element (see

@@ -460,12 +460,14 @@ $santricityApplianceCandidates = @()
 $santricityCollectionResults = @()
 Import-Module (Join-Path -Path $WorkspaceRoot -ChildPath 'Modules\AsBuilt.Common.psm1') -Force
 # ChangeLog:
+# 2026.09.01.2 - Added EC profile site-redundancy reporting based on erasure-coding fragment tolerance and storage-pool node distribution by site.
+# 2026.09.01.1 - Improved VLAN, Load Balancer, Multi-Admin Verification, and EC profile reporting; added EC scheme collection; removed the report-only SANtricity Appliance Discovery section.
 # 2026.08.31.1 - Added actionable validation for JSON input and title-page JSON, and report-write failures now name the affected output path; collect_asbuilt.ps1 reports uncaught collection errors at the command boundary.
 # 2026.08.29.1 - Removed the stale w:dirty flag and added cached placeholder text on the TOC field so Word no longer prompts to update fields on open; relies on AsBuilt.Common.psm1 2026.08.29.1 for the accompanying UpdateFieldsOnOpen=false setting.
 # 2026.08.27.2 - Added Multi-Admin Verification (MAV) support: collects /grid/mav-configuration, /grid/mav-requests, and /grid/mav-requests-history and reports them in a new Multi-Admin Verification subsection at the end of Configuration - Access Control, with pending/history requests mapped back to ILM policy names and requester full names, and a version-gated note for grids older than StorageGRID 12.1.
 # 2026.08.27.1 - Moved detailed node-attribute and private API diagnostics to verbose output, made the response type diagnostic null-safe, and report completion of the StorageGRID DOCX before prompting for, or collecting, SANtricity appliance reports.
 # 2026.08.26.1 - Replaced Pandoc-based DOCX generation with a direct DocumentFormat.OpenXml SDK pipeline (Lib\OpenXml); no external DOCX conversion binary is required. Fixed title-page section header/footer/titlePg preservation and single-column table parsing, added selective hyperlink support for markdown [text](url) content, and removed all Pandoc-related code and dependencies.
-$ScriptVersion = "2026.08.31.1"
+$ScriptVersion = "2026.09.01.2"
 
 if (-not $PSBoundParameters.ContainsKey('CleanupIntermediateOutputs')) {
     $CleanupIntermediateOutputs = $true
@@ -1464,7 +1466,6 @@ function Write-StorageGridMarkdown {
     $capacityMetrics    = Get-PropertyValue -Object $facts -PropertyName "sg_capacity_metrics"
     $applianceStorageMetrics = Get-PropertyValue -Object $facts -PropertyName "sg_appliance_storage_metrics"
     $nodeAttributeDetails = Get-PropertyValue -Object $facts -PropertyName "sg_node_attribute_details"
-    $santricityApplianceCandidates = Convert-ToArrayPayload -Payload (Get-PropertyValue -Object $facts -PropertyName "sg_santricity_appliance_candidates")
     $autosupport        = Get-PropertyValue -Object $facts -PropertyName "sg_autosupport"
     $identitySource     = Get-PropertyValue -Object $facts -PropertyName "sg_identity_source"
     $ssoConfig          = Get-PropertyValue -Object $facts -PropertyName "sg_sso"
@@ -1499,6 +1500,7 @@ function Write-StorageGridMarkdown {
     $ilmRules           = @((Get-PropertyValue -Object $facts -PropertyName "sg_ilm_rules"))
     $ilmPolicies        = @((Get-PropertyValue -Object $facts -PropertyName "sg_ilm_policies"))
     $ecProfiles         = @((Get-PropertyValue -Object $facts -PropertyName "sg_ec_profiles"))
+    $ecSchemes          = @((Get-PropertyValue -Object $facts -PropertyName "sg_ec_schemes"))
     $ilmPools           = @((Get-PropertyValue -Object $facts -PropertyName "sg_ilm_pools"))
     $ilmPolicyTags      = Convert-ToArrayPayload -Payload (Get-PropertyValue -Object $facts -PropertyName "sg_ilm_policy_tags")
     $ilmGrades          = Convert-ToArrayPayload -Payload (Get-PropertyValue -Object $facts -PropertyName "sg_ilm_grades")
@@ -2678,29 +2680,6 @@ function Write-StorageGridMarkdown {
     $markdownLines.Add("")
     Add-MarkdownTable -LineBuffer $markdownLines -Headers @("Node", "Site Name", "Storage Controller Name", "Controller A Mgmt IP", "Controller B Mgmt IP") -Rows $applianceControllerRows
 
-    # --- SANtricity Appliance Discovery ---
-    $markdownLines.Add("")
-    $markdownLines.Add("## SANtricity Appliance Discovery")
-    $markdownLines.Add("")
-    $markdownLines.Add("This table identifies StorageGRID appliances with one or more valid embedded SANtricity controller management IP addresses. These appliances are eligible for optional follow-on E-Series collection; discovery does not initiate SANtricity API access.")
-    $markdownLines.Add("")
-    $santricityDiscoveryRows = @()
-    foreach ($candidate in @($santricityApplianceCandidates)) {
-        $candidateIps = Convert-ToArrayPayload -Payload (Get-PropertyValue -Object $candidate -PropertyName "CandidateIps")
-        $santricityDiscoveryRows += ,@(
-            (Get-PropertyValue -Object $candidate -PropertyName "NodeName"),
-            (Get-PropertyValue -Object $candidate -PropertyName "SiteName"),
-            (Get-PropertyValue -Object $candidate -PropertyName "NodeType"),
-            (Get-PropertyValue -Object $candidate -PropertyName "ApplianceModel"),
-            (Get-PropertyValue -Object $candidate -PropertyName "ControllerName"),
-            ($candidateIps -join "`n"),
-            (& $boolText (Get-PropertyValue -Object $candidate -PropertyName "HasEseries")),
-            (Get-PropertyValue -Object $candidate -PropertyName "SantricityVersion"),
-            (& $boolText (Get-PropertyValue -Object $candidate -PropertyName "Eligible"))
-        )
-    }
-    Add-MarkdownTable -LineBuffer $markdownLines -Headers @("Node", "Site", "Node Type", "Model", "Controller Name", "SANtricity Management IPs", "hasEseries", "SANtricity Version", "Eligible") -Rows $santricityDiscoveryRows
-
     $markdownLines.Add("")
     # --- Grid Appliance Shelves ---
     $markdownLines.Add("## Grid Appliance Shelves")
@@ -2922,7 +2901,9 @@ function Write-StorageGridMarkdown {
     $mavSupported = Test-StorageGridMinimumVersion -VersionString $softwareVersion -MinimumMajor 12 -MinimumMinor 1
     if (-not $mavSupported) {
         $mavVersionDisplay = if ([string]::IsNullOrWhiteSpace($softwareVersion)) { "unknown" } else { $softwareVersion }
-        $markdownLines.Add("This grid is running StorageGRID $mavVersionDisplay, which does not support multi-admin verification, so the tables below show N/A.")
+        $markdownLines.Add('```{=openxml}')
+        & $emitOpenXmlParagraph -StyleId "SubtleEmphasis" -Text "This grid is running StorageGRID $mavVersionDisplay, which does not support multi-admin verification, so the tables below show N/A."
+        $markdownLines.Add('```')
         $markdownLines.Add("")
     }
     $mergeMarker = Get-AsBuiltTableMergeMarker
@@ -3632,8 +3613,33 @@ function Write-StorageGridMarkdown {
     $markdownLines.Add("")
     $markdownLines.Add("A Load Balancer endpoint defines a listening port on the StorageGRID Load Balancer service (running on Admin and/or Gateway Nodes) that accepts S3 client connections and forwards them to the appropriate Storage Nodes.")
     $markdownLines.Add("")
-    $markdownLines.Add("This table shows each endpoint's port, whether it uses TLS (secure), whether it is restricted to a specific tenant account, whether it is pinned to specific HA groups, and whether it is automatically closed on the untrusted Client Network.")
+    $managementEndpointRows = @()
+    foreach ($endpoint in $gatewayConfigs) {
+        $managementInterfaces = Get-PropertyValue -Object $endpoint -PropertyName "managementInterfaces"
+        $services = @()
+        if ((Get-PropertyValue -Object $managementInterfaces -PropertyName "enableGridManager") -eq $true) { $services += "Grid Manager" }
+        if ((Get-PropertyValue -Object $managementInterfaces -PropertyName "enableTenantManager") -eq $true) { $services += "Tenant Manager" }
+        if ($services.Count -eq 0) { continue }
+
+        $managementEndpointRows += ,@(
+            (& $boolText (Get-PropertyValue -Object $endpoint -PropertyName "displayName")),
+            (& $boolText (Get-PropertyValue -Object $endpoint -PropertyName "port")),
+            (& $boolText (Get-PropertyValue -Object $endpoint -PropertyName "secure")),
+            ($services -join "<br/>"),
+            (& $boolText (Get-PropertyValue -Object $endpoint -PropertyName "closedOnUntrustedClientNetwork"))
+        )
+    }
+    $markdownLines.Add("### Management Endpoints")
     $markdownLines.Add("")
+    $markdownLines.Add("These Load Balancer endpoints provide management access to the StorageGRID Grid Manager and Tenant Manager.")
+    $markdownLines.Add("")
+    Add-MarkdownTable -LineBuffer $markdownLines -Headers @("Endpoint Name", "Port", "Secure", "Service", "Closed On Untrusted") -Rows $managementEndpointRows
+    $markdownLines.Add("")
+    $markdownLines.Add("### S3 Client Endpoints")
+    $markdownLines.Add("")
+    $markdownLines.Add("This table shows each endpoint's port, whether it uses TLS (secure), whether it is restricted to a specific tenant account (0 means All Tenants), and whether it is automatically closed on the Untrusted Client Network.")
+    $markdownLines.Add("")
+
     $accountById = @{}
     foreach ($acct in $gridAccounts) {
         $acctId = [string](Get-PropertyValue -Object $acct -PropertyName "id")
@@ -3653,6 +3659,10 @@ function Write-StorageGridMarkdown {
     $lbEndpointRows = @()
     $endpointHaRows = @()
     foreach ($endpoint in $gatewayConfigs) {
+        $managementInterfaces = Get-PropertyValue -Object $endpoint -PropertyName "managementInterfaces"
+        $isManagementEndpoint = (Get-PropertyValue -Object $managementInterfaces -PropertyName "enableGridManager") -eq $true -or (Get-PropertyValue -Object $managementInterfaces -PropertyName "enableTenantManager") -eq $true
+        if ($isManagementEndpoint) { continue }
+
         $pinTargets = Get-PropertyValue -Object $endpoint -PropertyName "pinTargets"
         $pinHaGroups = @((Get-PropertyValue -Object $pinTargets -PropertyName "haGroups"))
         $endpointName = [string](Get-PropertyValue -Object $endpoint -PropertyName "displayName")
@@ -3838,22 +3848,31 @@ function Write-StorageGridMarkdown {
             $vlanNodeNameById[$healthNodeId] = $healthNodeName
         }
     }
+    $mergeMarker = Get-AsBuiltTableMergeMarker
     $vlanRows = @()
     foreach ($vlan in $vlanInterfaces) {
-        $vlanNodeId = [string](Get-PropertyValue -Object $vlan -PropertyName "nodeId")
-        $vlanNodeName = [string](Get-PropertyValue -Object $vlan -PropertyName "nodeName")
-        if ([string]::IsNullOrWhiteSpace($vlanNodeName) -and $vlanNodeNameById.ContainsKey($vlanNodeId)) {
-            $vlanNodeName = [string]$vlanNodeNameById[$vlanNodeId]
+        $vlanId = (& $boolText (Get-PropertyValue -Object $vlan -PropertyName "vlanId"))
+        $description = (& $boolText (Get-PropertyValue -Object $vlan -PropertyName "description"))
+        $interfaces = Convert-ToArrayPayload -Payload (Get-PropertyValue -Object $vlan -PropertyName "interfaces")
+        if ($interfaces.Count -eq 0) {
+            $vlanRows += ,@($vlanId, $description, "N/A")
+            continue
         }
-        $vlanRows += ,@(
-            (& $boolText (Get-PropertyValue -Object $vlan -PropertyName "name")),
-            (& $boolText (Get-PropertyValue -Object $vlan -PropertyName "id")),
-            (& $boolText (Get-PropertyValue -Object $vlan -PropertyName "vlanId")),
-            (& $boolText (Get-PropertyValue -Object $vlan -PropertyName "parentInterface")),
-            (& $boolText $vlanNodeName)
-        )
+
+        for ($interfaceIndex = 0; $interfaceIndex -lt $interfaces.Count; $interfaceIndex++) {
+            $interfaceItem = $interfaces[$interfaceIndex]
+            $interfaceNodeId = [string](Get-PropertyValue -Object $interfaceItem -PropertyName "nodeId")
+            $interfaceNodeName = if ($vlanNodeNameById.ContainsKey($interfaceNodeId)) { [string]$vlanNodeNameById[$interfaceNodeId] } else { $interfaceNodeId }
+            $interfaceName = (& $boolText (Get-PropertyValue -Object $interfaceItem -PropertyName "interface"))
+            $interfaceDisplay = if ([string]::IsNullOrWhiteSpace($interfaceNodeName)) { $interfaceName } else { "$interfaceNodeName`:$interfaceName" }
+            $vlanRows += ,@(
+                $(if ($interfaceIndex -eq 0) { $vlanId } else { $mergeMarker }),
+                $(if ($interfaceIndex -eq 0) { $description } else { $mergeMarker }),
+                $interfaceDisplay
+            )
+        }
     }
-    Add-MarkdownTable -LineBuffer $markdownLines -Headers @("VLAN Name", "VLAN Id", "Tag", "Parent Interface", "Node Name") -Rows $vlanRows
+    Add-MarkdownTable -LineBuffer $markdownLines -Headers @("VLAN ID", "Description", "Interfaces") -Rows $vlanRows
 
     # --- Management Interface CORS ---
     $markdownLines.Add("")
@@ -4155,6 +4174,22 @@ function Write-StorageGridMarkdown {
     $markdownLines.Add("")
     $markdownLines.Add("This table shows each defined erasure coding profile and the storage pool it is associated with.")
     $markdownLines.Add("")
+    $ecSchemeById = @{}
+    foreach ($ecScheme in $ecSchemes) {
+        $ecSchemeId = [string](Get-PropertyValue -Object $ecScheme -PropertyName "id")
+        if (-not [string]::IsNullOrWhiteSpace($ecSchemeId)) {
+            $ecSchemeById[$ecSchemeId] = $ecScheme
+        }
+    }
+    $siteNameByStorageNodeName = @{}
+    foreach ($node in $nodeHealth) {
+        if ([string](Get-PropertyValue -Object $node -PropertyName "type") -ne "storageNode") { continue }
+        $nodeName = [string](Get-PropertyValue -Object $node -PropertyName "name")
+        $siteName = [string](Get-PropertyValue -Object $node -PropertyName "siteName")
+        if (-not [string]::IsNullOrWhiteSpace($nodeName) -and -not [string]::IsNullOrWhiteSpace($siteName)) {
+            $siteNameByStorageNodeName[$nodeName] = $siteName
+        }
+    }
     $ecRows = @()
     foreach ($ec in $ecProfiles) {
         $poolId = [string](Get-PropertyValue -Object $ec -PropertyName "poolId")
@@ -4162,16 +4197,49 @@ function Write-StorageGridMarkdown {
         if ($ilmPoolById.ContainsKey($poolId)) {
             $poolName = [string](Get-PropertyValue -Object $ilmPoolById[$poolId] -PropertyName "displayName")
         }
+        $schemeId = [string](Get-PropertyValue -Object $ec -PropertyName "schemeId")
+        $scheme = if ($ecSchemeById.ContainsKey($schemeId)) { $ecSchemeById[$schemeId] } else { $null }
+        $schemeName = if ($null -ne $scheme) { (& $boolText (Get-PropertyValue -Object $scheme -PropertyName "name")) } else { "N/A" }
+        $storageOverhead = if ($null -ne $scheme) { Get-PropertyValue -Object $scheme -PropertyName "storageOverhead" } else { $null }
+        $overheadDisplay = if ($null -eq $storageOverhead -or [string]::IsNullOrWhiteSpace([string]$storageOverhead)) { "N/A" } else { "${storageOverhead}%" }
+        $siteRedundancy = "N/A"
+        $schemeFragments = [regex]::Match($schemeName, '^(\d+)\s*\+\s*(\d+)')
+        $pool = if ($ilmPoolById.ContainsKey($poolId)) { $ilmPoolById[$poolId] } else { $null }
+        if ($schemeFragments.Success -and $null -ne $pool) {
+            $dataFragments = [int]$schemeFragments.Groups[1].Value
+            $parityFragments = [int]$schemeFragments.Groups[2].Value
+            $poolNodesBySite = @{}
+            $hasUnresolvedPoolNode = $false
+            foreach ($poolNodeName in @(Get-PropertyValue -Object $pool -PropertyName "storageNodes")) {
+                $resolvedNodeName = [string]$poolNodeName
+                if (-not $siteNameByStorageNodeName.ContainsKey($resolvedNodeName)) {
+                    $hasUnresolvedPoolNode = $true
+                    continue
+                }
+                $siteName = $siteNameByStorageNodeName[$resolvedNodeName]
+                if (-not $poolNodesBySite.ContainsKey($siteName)) { $poolNodesBySite[$siteName] = 0 }
+                $poolNodesBySite[$siteName]++
+            }
+
+            if (-not $hasUnresolvedPoolNode -and $parityFragments -gt 0 -and $poolNodesBySite.Count -gt 0) {
+                # A lost site must contain no more than the parity-fragment tolerance. Distributing
+                # k+m fragments accordingly requires ceil((k+m)/m) sites, each with at least m nodes.
+                $requiredSiteCount = [int][Math]::Ceiling(($dataFragments + $parityFragments) / [double]$parityFragments)
+                $minimumNodesPerSite = @($poolNodesBySite.Values | Measure-Object -Minimum).Minimum
+                $siteRedundancy = if ($poolNodesBySite.Count -ge $requiredSiteCount -and $minimumNodesPerSite -ge $parityFragments) { "Yes" } else { "No" }
+            }
+        }
         $ecRows += ,@(
             (& $boolText (Get-PropertyValue -Object $ec -PropertyName "name")),
-            (& $boolText (Get-PropertyValue -Object $ec -PropertyName "id")),
+            $schemeName,
             (& $boolText $poolName),
-            (& $boolText (Get-PropertyValue -Object $ec -PropertyName "schemeId")),
+            $overheadDisplay,
             (& $boolText (Get-PropertyValue -Object $ec -PropertyName "gridNodeRedundancy")),
+            $siteRedundancy,
             (& $boolText (Get-PropertyValue -Object $ec -PropertyName "active"))
         )
     }
-    Add-MarkdownTable -LineBuffer $markdownLines -Headers @("Profile Name", "Profile Id", "Storage Pool", "Scheme Id", "Node Redundancy", "Active") -Rows $ecRows
+    Add-MarkdownTable -LineBuffer $markdownLines -Headers @("Profile Name", "Scheme", "Storage Pool", "Overhead", "Node Redundancy", "Site Redundancy", "Active") -Rows $ecRows
 
     # --- Regions ---
     $markdownLines.Add("")
@@ -5870,6 +5938,7 @@ $endpointMap = @(
     @{ Key = "ilm_policies";              Endpoint = "/grid/ilm-policies" },
     @{ Key = "ilm_policy_tags";           Endpoint = "/grid/ilm-policy-tags" },
     @{ Key = "ec_profiles";               Endpoint = "/grid/ec-profiles" },
+    @{ Key = "ec_schemes";                Endpoint = "/grid/schemes" },
     @{ Key = "grid_accounts";             Endpoint = "/grid/accounts" },
     @{ Key = "mav_configuration";         Endpoint = "/grid/mav-configuration" },
     @{ Key = "mav_requests";              Endpoint = "/grid/mav-requests?my-request=false" },
@@ -6022,6 +6091,7 @@ $arrayPayloadKeys = @(
     "ilm_policies",
     "ilm_policy_tags",
     "ec_profiles",
+    "ec_schemes",
     "grid_accounts",
     "ha_groups",
     "gateway_configs",
@@ -6099,6 +6169,7 @@ $asbuiltExport = [ordered]@{
         sg_ilm_policies             = Get-ResponseData -Responses $responses -Key "ilm_policies"         -AsArray
         sg_ilm_policy_tags          = Get-ResponseData -Responses $responses -Key "ilm_policy_tags"      -AsArray
         sg_ec_profiles              = Get-ResponseData -Responses $responses -Key "ec_profiles"          -AsArray
+        sg_ec_schemes               = Get-ResponseData -Responses $responses -Key "ec_schemes"           -AsArray
         sg_ilm_pools                = Get-ResponseData -Responses $responses -Key "ilm_pools"            -AsArray
         sg_ilm_grades               = Get-ResponseData -Responses $responses -Key "ilm_grades"           -AsArray
         sg_ilm_grade_site           = Get-ResponseData -Responses $responses -Key "ilm_grade_site"       -AsArray
