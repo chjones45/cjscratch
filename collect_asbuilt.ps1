@@ -1,52 +1,58 @@
+# ChangeLog:
+# 2026.10.15.6 - Prompt with supported platform choices when Platform is omitted.
+# 2026.10.15.5 - Removed replay, collection-only, capacity diagnostics, system-proxy, and SSID parameters.
+# 2026.10.15.4 - Removed structured title-page field inputs; retain named fields and prompting.
+# 2026.10.15.3 - Removed legacy plaintext credential inputs, cleanup and DOCX layout overrides, and the E-Series Port parameter.
+# 2026.10.15.2 - Added the entry-point script version identifier.
+# 2026.10.15.1 - Enabled TLS certificate validation by default; allow explicit opt-out with -ValidateCerts:$false.
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
     [ValidateSet('StorageGRID', 'ESeries')]
     [string]$Platform,
 
-    # Preferred E-Series form: https://santricity.example.com or https://santricity.example.com:8443
+    # E-Series target examples: santricity.example.com:8443 or https://santricity.example.com:8443
     [string]$Target,
-    [int]$Port = 8443,
-    [string]$ApiUsername,
-    [System.Security.SecureString]$ApiPasswordSecure,
-    [Alias('ApiPassword')]
-    [string]$LegacyApiSecret,
     [System.Management.Automation.PSCredential]$Credential,
-    [string]$Ssid,
-    [switch]$ValidateCerts,
-    [switch]$UseSystemProxy,
+    [switch]$ValidateCerts = $true,
     [string]$OutputDir,
-    [switch]$CollectionOnly,
-    [switch]$ExportCapacityDiagnostics,
     [switch]$CollectSantricityAppliances,
     [switch]$NonInteractive,
     [System.Management.Automation.PSCredential]$SantricityCredential,
     [string]$SantricityAuthMapPath,
-    [string]$JsonInputPath,
     [string]$ReportPrefix,
-    [switch]$CleanupIntermediateOutputs,
     [switch]$KeepIntermediateOutputs,
-    [switch]$EnableDocxToc,
-    [int]$DocxTocDepth,
-    [switch]$EnableDocxNumberSections,
-    [string]$DocxTableStyleName,
-    [string]$DocxTableHeaderParagraphStyle,
-    [string]$DocxTableBodyParagraphStyle,
-    [switch]$DocxTableAutofitToWindow,
-    [switch]$DocxEnableTitlePage,
     [Alias('TitleCustomerName')]
     [string]$CustomerName,
     [Alias('TitleCustomerLocation')]
     [string]$CustomerLocation,
     [Alias('TitleProjectName')]
     [string]$ProjectName,
-    [hashtable]$TitlePageFields,
-    [string]$TitlePageFieldsJson,
     [switch]$PromptForTitlePageFields
 )
 
+$ScriptVersion = '2026.10.15.6'
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+Write-Verbose "As-built entry point version: $ScriptVersion"
+
+if ([string]::IsNullOrWhiteSpace($Platform)) {
+    if ($NonInteractive) {
+        throw 'Platform is required in non-interactive mode. Specify -Platform StorageGRID or -Platform ESeries.'
+    }
+
+    do {
+        $platformSelection = Read-Host 'Select platform (StorageGRID or ESeries)'
+        if ($platformSelection -ieq 'StorageGRID') {
+            $Platform = 'StorageGRID'
+        }
+        elseif ($platformSelection -ieq 'ESeries') {
+            $Platform = 'ESeries'
+        }
+        else {
+            Write-Warning 'Invalid platform. Enter StorageGRID or ESeries.'
+        }
+    } while ([string]::IsNullOrWhiteSpace($Platform))
+}
 
 $moduleName = if ($Platform -eq 'StorageGRID') { 'AsBuilt.StorageGrid.psm1' } else { 'AsBuilt.ESeries.psm1' }
 $commandName = if ($Platform -eq 'StorageGRID') { 'Invoke-StorageGridAsBuilt' } else { 'Invoke-ESeriesAsBuilt' }
@@ -64,45 +70,27 @@ catch {
 
 $commonParameterNames = @(
     'Target',
-    'ApiUsername',
-    'ApiPasswordSecure',
-    'LegacyApiSecret',
     'Credential',
     'ValidateCerts',
-    'UseSystemProxy',
     'OutputDir',
-    'CollectionOnly',
-    'JsonInputPath',
     'ReportPrefix',
-    'CleanupIntermediateOutputs',
     'KeepIntermediateOutputs',
     'NonInteractive',
-    'EnableDocxToc',
-    'DocxTocDepth',
-    'EnableDocxNumberSections',
-    'DocxTableStyleName',
-    'DocxTableHeaderParagraphStyle',
-    'DocxTableBodyParagraphStyle',
-    'DocxTableAutofitToWindow',
-    'DocxEnableTitlePage',
     'CustomerName',
     'CustomerLocation',
     'ProjectName',
-    'TitlePageFields',
-    'TitlePageFieldsJson',
     'PromptForTitlePageFields'
 )
 
 $platformParameterNames = if ($Platform -eq 'StorageGRID') {
     @(
-        'ExportCapacityDiagnostics',
         'CollectSantricityAppliances',
         'SantricityCredential',
         'SantricityAuthMapPath'
     )
 }
 else {
-    @('Port', 'Ssid')
+    @()
 }
 
 $invokeParameters = @{ WorkspaceRoot = $PSScriptRoot }

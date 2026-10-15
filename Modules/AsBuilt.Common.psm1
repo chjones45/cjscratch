@@ -1,11 +1,14 @@
 Set-StrictMode -Version Latest
 
 # ChangeLog:
+# 2026.10.15.3 - Removed the unused system-proxy and collection-only options from shared settings.
+# 2026.10.15.2 - Updated the common-module version identifier and aligned its variable name with the platform modules.
+# 2026.10.15.1 - Changed the shared settings default to enable TLS certificate validation.
 # 2026.09.01.1 - Added the generated-document Subtle Emphasis paragraph style used for StorageGRID Multi-Admin Verification version notices.
 # 2026.08.31.1 - Added validation and actionable failures for missing, incompatible, or blocked OpenXML SDK assemblies.
 # 2026.08.29.1 - Set word/settings.xml UpdateFieldsOnOpen to false in Convert-AsBuiltMarkdownToDocx (via reflection, for Windows PowerShell 5.1 compatibility) so DOCPROPERTY/TOC fields no longer silently recalculate on open.
 # 2026.08.27.1 - Added vertical cell-merge (w:vMerge) support to the markdown-to-docx table renderer, driven by an invisible-marker convention (Get-AsBuiltTableMergeMarker), for the StorageGRID MAV Configuration table.
-$script:AsBuiltCommonModuleVersion = "2026.09.01.1"
+$ScriptVersion = "2026.10.15.3"
 
 # Invisible-separator marker (U+2063): placed in a table cell to signal that the docx renderer
 # should vertically merge that cell with the one above it, instead of repeating the same value.
@@ -127,9 +130,7 @@ function New-AsBuiltSettings {
         [Parameter(Mandatory = $false)][string]$Target,
         [Parameter(Mandatory = $false)][System.Management.Automation.PSCredential]$Credential,
         [Parameter(Mandatory = $false)][string]$OutputDir,
-        [Parameter(Mandatory = $false)][bool]$ValidateCerts = $false,
-        [Parameter(Mandatory = $false)][bool]$UseSystemProxy = $false,
-        [Parameter(Mandatory = $false)][bool]$CollectionOnly = $false,
+        [Parameter(Mandatory = $false)][bool]$ValidateCerts = $true,
         [Parameter(Mandatory = $false)][bool]$KeepIntermediateOutputs = $false,
         [Parameter(Mandatory = $false)][hashtable]$PlatformOptions = @{}
     )
@@ -140,8 +141,6 @@ function New-AsBuiltSettings {
         Credential              = $Credential
         OutputDir               = $OutputDir
         ValidateCerts           = $ValidateCerts
-        UseSystemProxy          = $UseSystemProxy
-        CollectionOnly          = $CollectionOnly
         KeepIntermediateOutputs = $KeepIntermediateOutputs
         PlatformOptions         = $PlatformOptions
     }

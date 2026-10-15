@@ -178,13 +178,10 @@ function Invoke-StorageGridSantricityApplianceCollection {
         [Parameter(Mandatory = $false)][System.Management.Automation.PSCredential]$SharedCredential,
         [Parameter(Mandatory = $false)][hashtable]$CredentialMap,
         [Parameter(Mandatory = $false)][switch]$ValidateCerts,
-        [Parameter(Mandatory = $false)][switch]$UseSystemProxy,
         [Parameter(Mandatory = $false)][switch]$KeepIntermediateOutputs,
-        [Parameter(Mandatory = $false)][switch]$DocxEnableTitlePage,
         [Parameter(Mandatory = $false)][string]$CustomerName,
         [Parameter(Mandatory = $false)][string]$CustomerLocation,
         [Parameter(Mandatory = $false)][string]$ProjectName,
-        [Parameter(Mandatory = $false)][hashtable]$TitlePageFields,
         [Parameter(Mandatory = $false)][scriptblock]$CollectorCommand
     )
 
@@ -228,11 +225,7 @@ function Invoke-StorageGridSantricityApplianceCollection {
                     ReportPrefix             = [string]$candidate.NodeName
                     WorkspaceRoot            = $WorkspaceRoot
                     ValidateCerts            = $ValidateCerts.IsPresent
-                    UseSystemProxy           = $UseSystemProxy.IsPresent
                     KeepIntermediateOutputs = $KeepIntermediateOutputs.IsPresent
-                }
-                if ($DocxEnableTitlePage.IsPresent) {
-                    $invokeParameters.DocxEnableTitlePage = $true
                 }
                 if (-not [string]::IsNullOrWhiteSpace($CustomerName)) {
                     $invokeParameters.CustomerName = $CustomerName
@@ -242,9 +235,6 @@ function Invoke-StorageGridSantricityApplianceCollection {
                 }
                 if (-not [string]::IsNullOrWhiteSpace($ProjectName)) {
                     $invokeParameters.ProjectName = $ProjectName
-                }
-                if ($null -ne $TitlePageFields -and $TitlePageFields.Count -gt 0) {
-                    $invokeParameters.TitlePageFields = $TitlePageFields
                 }
                 if ($null -ne $CollectorCommand) {
                     & $CollectorCommand @invokeParameters
@@ -347,33 +337,13 @@ param(
     [string]$Target,
 
     [Parameter(Mandatory = $false)]
-    [string]$ApiUsername,
-
-    [Parameter(Mandatory = $false)]
-    [System.Security.SecureString]$ApiPasswordSecure,
-
-    # Backward-compatible alias for legacy plain-text password input; -Credential is preferred.
-    [Parameter(Mandatory = $false)]
-    [Alias("ApiPassword")]
-    [string]$LegacyApiSecret,
-
-    [Parameter(Mandatory = $false)]
     [System.Management.Automation.PSCredential]$Credential,
 
     [Parameter(Mandatory = $false)]
     [switch]$ValidateCerts,
 
     [Parameter(Mandatory = $false)]
-    [switch]$UseSystemProxy,
-
-    [Parameter(Mandatory = $false)]
     [string]$OutputDir = ".\asbuilt_output_storagegrid",
-
-    [Parameter(Mandatory = $false)]
-    [switch]$CollectionOnly,
-
-    [Parameter(Mandatory = $false)]
-    [switch]$ExportCapacityDiagnostics,
 
     [Parameter(Mandatory = $false)]
     [switch]$CollectSantricityAppliances,
@@ -389,40 +359,10 @@ param(
 
     # Load previously collected JSON instead of running a live collection (skips Target/Credential requirements)
     [Parameter(Mandatory = $false)]
-    [string]$JsonInputPath,
-
-    [Parameter(Mandatory = $false)]
     [string]$ReportPrefix = "",
 
     [Parameter(Mandatory = $false)]
-    [switch]$CleanupIntermediateOutputs,
-
-    [Parameter(Mandatory = $false)]
     [switch]$KeepIntermediateOutputs = $false,
-
-    [Parameter(Mandatory = $false)]
-    [switch]$EnableDocxToc,
-
-    [Parameter(Mandatory = $false)]
-    [int]$DocxTocDepth = 3,
-
-    [Parameter(Mandatory = $false)]
-    [switch]$EnableDocxNumberSections,
-
-    [Parameter(Mandatory = $false)]
-    [string]$DocxTableStyleName = "NetAppTable1",
-
-    [Parameter(Mandatory = $false)]
-    [string]$DocxTableHeaderParagraphStyle = "TableHeading",
-
-    [Parameter(Mandatory = $false)]
-    [string]$DocxTableBodyParagraphStyle = "TableText",
-
-    [Parameter(Mandatory = $false)]
-    [switch]$DocxTableAutofitToWindow,
-
-    [Parameter(Mandatory = $false)]
-    [switch]$DocxEnableTitlePage,
 
     [Parameter(Mandatory = $false)]
     [Alias("TitleCustomerName")]
@@ -437,12 +377,6 @@ param(
     [string]$ProjectName,
 
     [Parameter(Mandatory = $false)]
-    [hashtable]$TitlePageFields,
-
-    [Parameter(Mandatory = $false)]
-    [string]$TitlePageFieldsJson,
-
-    [Parameter(Mandatory = $false)]
     [switch]$PromptForTitlePageFields
 ,
 
@@ -452,6 +386,9 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+if (-not $PSBoundParameters.ContainsKey('ValidateCerts')) {
+    $ValidateCerts = $true
+}
 $collectSantricitySpecified = $PSBoundParameters.ContainsKey('CollectSantricityAppliances')
 $santricityMode = Get-StorageGridSantricityCollectionMode -CollectSantricityAppliances ([bool]$CollectSantricityAppliances) -CollectParameterSpecified ([bool]$collectSantricitySpecified) -NonInteractive ([bool]$NonInteractive)
 $santricityDetectionEnabled = $santricityMode.DetectionEnabled
@@ -460,6 +397,14 @@ $santricityApplianceCandidates = @()
 $santricityCollectionResults = @()
 Import-Module (Join-Path -Path $WorkspaceRoot -ChildPath 'Modules\AsBuilt.Common.psm1') -Force
 # ChangeLog:
+# 2026.10.15.8 - Initialize internal title-page fields after removing the structured-field parameter.
+# 2026.10.15.7 - Removed JSON replay, collection-only, and capacity-diagnostics options; keep JSON only as an intermediate.
+# 2026.10.15.6 - Removed the system-proxy input; preserve direct connection as the fixed proxy behavior.
+# 2026.10.15.5 - Removed structured title-page field inputs; retain named fields and prompting.
+# 2026.10.15.4 - Sanitize ReportPrefix before using it in generated report filenames.
+# 2026.10.15.3 - Removed legacy plaintext credential, cleanup, and DOCX layout inputs; fixed report formatting and cleanup defaults.
+# 2026.10.15.2 - Updated the reported StorageGRID script version.
+# 2026.10.15.1 - Enabled TLS certificate validation by default, added explicit opt-out guidance for certificate errors, and documented -ValidateCerts:$false.
 # 2026.09.01.2 - Added EC profile site-redundancy reporting based on erasure-coding fragment tolerance and storage-pool node distribution by site.
 # 2026.09.01.1 - Improved VLAN, Load Balancer, Multi-Admin Verification, and EC profile reporting; added EC scheme collection; removed the report-only SANtricity Appliance Discovery section.
 # 2026.08.31.1 - Added actionable validation for JSON input and title-page JSON, and report-write failures now name the affected output path; collect_asbuilt.ps1 reports uncaught collection errors at the command boundary.
@@ -467,20 +412,15 @@ Import-Module (Join-Path -Path $WorkspaceRoot -ChildPath 'Modules\AsBuilt.Common
 # 2026.08.27.2 - Added Multi-Admin Verification (MAV) support: collects /grid/mav-configuration, /grid/mav-requests, and /grid/mav-requests-history and reports them in a new Multi-Admin Verification subsection at the end of Configuration - Access Control, with pending/history requests mapped back to ILM policy names and requester full names, and a version-gated note for grids older than StorageGRID 12.1.
 # 2026.08.27.1 - Moved detailed node-attribute and private API diagnostics to verbose output, made the response type diagnostic null-safe, and report completion of the StorageGRID DOCX before prompting for, or collecting, SANtricity appliance reports.
 # 2026.08.26.1 - Replaced Pandoc-based DOCX generation with a direct DocumentFormat.OpenXml SDK pipeline (Lib\OpenXml); no external DOCX conversion binary is required. Fixed title-page section header/footer/titlePg preservation and single-column table parsing, added selective hyperlink support for markdown [text](url) content, and removed all Pandoc-related code and dependencies.
-$ScriptVersion = "2026.09.01.2"
-
-if (-not $PSBoundParameters.ContainsKey('CleanupIntermediateOutputs')) {
-    $CleanupIntermediateOutputs = $true
-}
-if (-not $PSBoundParameters.ContainsKey('EnableDocxToc')) {
-    $EnableDocxToc = $true
-}
-if (-not $PSBoundParameters.ContainsKey('DocxTableAutofitToWindow')) {
-    $DocxTableAutofitToWindow = $true
-}
-if (-not $PSBoundParameters.ContainsKey('DocxEnableTitlePage')) {
-    $DocxEnableTitlePage = $true
-}
+$ScriptVersion = "2026.10.15.8"
+$EnableDocxToc = $true
+$DocxTocDepth = 3
+$EnableDocxNumberSections = $false
+$DocxTableStyleName = 'NetAppTable1'
+$DocxTableHeaderParagraphStyle = 'TableHeading'
+$DocxTableBodyParagraphStyle = 'TableText'
+$DocxTableAutofitToWindow = $true
+$santricitySummaryPath = $null
 
 Write-Host "PowerShell Script Version: $ScriptVersion"
 
@@ -1310,7 +1250,11 @@ function Get-StorageGridToken {
         return [string]$token
     }
     catch {
-        throw "StorageGRID authentication failed: " + (Get-ExceptionMessageChain -Exception $_.Exception)
+        $errorMessage = Get-ExceptionMessageChain -Exception $_.Exception
+        if ($errorMessage -match '(?i)(certificate|trust relationship|SSL/TLS secure channel)') {
+            $errorMessage += ' To bypass certificate verification for this collection, explicitly pass -ValidateCerts:$false. This disables TLS certificate validation and is not recommended outside a trusted network.'
+        }
+        throw "StorageGRID authentication failed: $errorMessage"
     }
 }
 
@@ -5633,131 +5577,9 @@ function Get-StorageGridCapacitySummary {
     }
 }
 
-function Get-StorageGridCapacityDiagnostics {
-    param(
-        [Parameter(Mandatory = $true)][string]$BaseUrl,
-        [Parameter(Mandatory = $true)][string]$BearerToken,
-        [Parameter(Mandatory = $false)][object[]]$NodeHealth = @()
-    )
-
-    $candidateMetrics = @(
-        "storagegrid_storage_utilization_total_space_bytes",
-        "storagegrid_storage_volume_total_space",
-        "storagegrid_storage_utilization_usable_space_bytes",
-        "storagegrid_storage_volume_available_space",
-        "storagegrid_storage_utilization_data_bytes",
-        "storagegrid_storage_pool_utilization_data_bytes",
-        "storagegrid_storage_pool_utilization_usable_space_bytes",
-        "storagegrid_storage_volume_object_data_percent",
-        "storagegrid_storage_utilization_ec_data_bytes",
-        "storagegrid_storage_utilization_metadata_allowed_bytes",
-        "storagegrid_storage_utilization_metadata_bytes",
-        "storagegrid_storage_utilization_metadata_reserved_bytes",
-        "storagegrid_volume_device_free_space"
-    )
-
-    $siteLabel = Find-StorageGridMetricGroupingLabel -BaseUrl $BaseUrl -BearerToken $BearerToken -MetricNames $candidateMetrics -LabelCandidates @("site_name", "site_id")
-    $nodeLabel = Find-StorageGridMetricGroupingLabel -BaseUrl $BaseUrl -BearerToken $BearerToken -MetricNames $candidateMetrics -LabelCandidates @("instance", "node", "node_id")
-
-    $metricRows = @()
-    foreach ($metricName in $candidateMetrics) {
-        $gridValue = Convert-ToNullableDouble -Value (Get-StorageGridMetricAggregateValue -BaseUrl $BaseUrl -BearerToken $BearerToken -MetricName $metricName)
-        $siteRows = @()
-        if (-not [string]::IsNullOrWhiteSpace($siteLabel)) {
-            $siteRows = Convert-ToFlatObjectArray -Value (Get-StorageGridMetricGroupedValues -BaseUrl $BaseUrl -BearerToken $BearerToken -MetricName $metricName -GroupLabel $siteLabel)
-        }
-
-        $nodeRowsRaw = @()
-        if (-not [string]::IsNullOrWhiteSpace($nodeLabel)) {
-            $nodeRowsRaw = Convert-ToFlatObjectArray -Value (Get-StorageGridMetricGroupedValues -BaseUrl $BaseUrl -BearerToken $BearerToken -MetricName $metricName -GroupLabel $nodeLabel)
-        }
-
-        $nodeRows = @()
-        foreach ($nodeRow in $nodeRowsRaw) {
-            $nodeValue = Convert-ToNullableDouble -Value (Get-PropertyValue -Object $nodeRow -PropertyName "Value")
-            if ($null -eq $nodeValue) {
-                continue
-            }
-
-            $nodeInfo = Resolve-StorageGridNodeMetricLabel -LabelValue ([string]$nodeRow.Label) -NodeHealth $NodeHealth
-            $nodeRows += [pscustomobject][ordered]@{
-                node = [string]$nodeInfo.NodeName
-                siteName = [string]$nodeInfo.SiteName
-                metricLabel = [string]$nodeInfo.LabelValue
-                value = $nodeValue
-            }
-        }
-
-        $metricRows += [pscustomobject][ordered]@{
-            metric = [string]$metricName
-            gridValue = $gridValue
-            siteLabel = [string]$siteLabel
-            nodeLabel = [string]$nodeLabel
-            sites = [object[]]@($siteRows | Sort-Object -Property Label)
-            nodes = [object[]]@($nodeRows | Sort-Object -Property siteName, node)
-        }
-    }
-
-    return [pscustomobject][ordered]@{
-        generatedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
-        siteLabel = [string]$siteLabel
-        nodeLabel = [string]$nodeLabel
-        metrics = [object[]]@($metricRows)
-    }
+if ([string]::IsNullOrWhiteSpace($Target)) {
+    $Target = Read-Host "Enter the StorageGRID Management API target including its port (e.g. admin.example.com:443 or https://admin.example.com:443)"
 }
-
-function Convert-StorageGridCapacityDiagnosticsToFlatRows {
-    param([Parameter(Mandatory = $true)]$Diagnostics)
-
-    $rows = @()
-    $metrics = Convert-ToArrayPayload -Payload (Get-PropertyValue -Object $Diagnostics -PropertyName "metrics")
-    foreach ($metricEntry in @($metrics)) {
-        $metricName = [string](Get-PropertyValue -Object $metricEntry -PropertyName "metric")
-        $gridValue = Get-PropertyValue -Object $metricEntry -PropertyName "gridValue"
-        $rows += [pscustomobject][ordered]@{
-            scope = "grid"
-            metric = $metricName
-            group = "grid"
-            metricLabel = "grid"
-            node = ""
-            siteName = ""
-            value = $gridValue
-        }
-
-        $siteRows = Convert-ToFlatObjectArray -Value (Get-PropertyValue -Object $metricEntry -PropertyName "sites")
-        foreach ($siteRow in @($siteRows)) {
-            $rows += [pscustomobject][ordered]@{
-                scope = "site"
-                metric = $metricName
-                group = [string](Get-PropertyValue -Object $siteRow -PropertyName "Label")
-                metricLabel = [string](Get-PropertyValue -Object $siteRow -PropertyName "Label")
-                node = ""
-                siteName = [string](Get-PropertyValue -Object $siteRow -PropertyName "Label")
-                value = Get-PropertyValue -Object $siteRow -PropertyName "Value"
-            }
-        }
-
-        $nodeRows = Convert-ToFlatObjectArray -Value (Get-PropertyValue -Object $metricEntry -PropertyName "nodes")
-        foreach ($nodeRow in @($nodeRows)) {
-            $rows += [pscustomobject][ordered]@{
-                scope = "node"
-                metric = $metricName
-                group = [string](Get-PropertyValue -Object $nodeRow -PropertyName "node")
-                metricLabel = [string](Get-PropertyValue -Object $nodeRow -PropertyName "metricLabel")
-                node = [string](Get-PropertyValue -Object $nodeRow -PropertyName "node")
-                siteName = [string](Get-PropertyValue -Object $nodeRow -PropertyName "siteName")
-                value = Get-PropertyValue -Object $nodeRow -PropertyName "value"
-            }
-        }
-    }
-
-    return ,$rows
-}
-
-if ([string]::IsNullOrWhiteSpace($JsonInputPath)) {
-    if ([string]::IsNullOrWhiteSpace($Target)) {
-        $Target = Read-Host "Enter the StorageGRID Management API target (e.g. admin.example.com, admin.example.com:8443, or https://admin.example.com)"
-    }
 
     # Default bare host or host:port input to HTTPS; retain an explicit HTTP or HTTPS scheme.
     $Target = $Target.Trim()
@@ -5774,26 +5596,8 @@ if ([string]::IsNullOrWhiteSpace($JsonInputPath)) {
         $Target = $Matches[1]
     }
 
-    if ($null -eq $Credential) {
-        $resolvedApiPassword = $null
-        if ($ApiPasswordSecure -is [System.Security.SecureString]) {
-            $resolvedApiPassword = $ApiPasswordSecure
-        }
-        elseif (-not [string]::IsNullOrWhiteSpace($LegacyApiSecret)) {
-            $resolvedApiPassword = ConvertTo-SecureString -String $LegacyApiSecret -AsPlainText -Force
-        }
-
-        if (-not [string]::IsNullOrWhiteSpace($ApiUsername) -and $null -ne $resolvedApiPassword) {
-            Write-Warning "ApiUsername/ApiPassword parameters are a legacy fallback and may expose secrets in shell history. Prefer -Credential or interactive Get-Credential prompt."
-            $Credential = New-Object System.Management.Automation.PSCredential(
-                $ApiUsername,
-                $resolvedApiPassword
-            )
-        }
-        else {
-            $Credential = Get-Credential -Message "Enter StorageGRID Management API credentials"
-        }
-    }
+if ($null -eq $Credential) {
+    $Credential = Get-Credential -Message "Enter StorageGRID Management API credentials"
 }
 
 if ($PromptForTitlePageFields) {
@@ -5808,25 +5612,7 @@ if ($PromptForTitlePageFields) {
     }
 }
 
-if ($null -eq $TitlePageFields) {
-    $TitlePageFields = @{}
-}
-
-if (-not [string]::IsNullOrWhiteSpace($TitlePageFieldsJson)) {
-    try {
-        $parsed = ConvertFrom-Json -InputObject $TitlePageFieldsJson -ErrorAction Stop
-    }
-    catch {
-        throw "TitlePageFieldsJson is not valid JSON: $($_.Exception.Message) Supply a JSON object that maps field names to values."
-    }
-    $parsedFields = ConvertTo-Hashtable -InputObject $parsed
-    if ($parsedFields.Count -eq 0) {
-        throw 'TitlePageFieldsJson must contain a JSON object with one or more field/value pairs.'
-    }
-    foreach ($k in $parsedFields.Keys) {
-        $TitlePageFields[$k] = $parsedFields[$k]
-    }
-}
+$TitlePageFields = @{}
 
 if (-not [string]::IsNullOrWhiteSpace($CustomerName)) {
     $TitlePageFields["<<CUSTOMER_NAME>>"] = $CustomerName
@@ -5845,61 +5631,16 @@ Initialize-Path -Path $outputDirResolved
 
 $timestamp = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmss")
 $iso8601 = (Get-Date).ToUniversalTime().ToString("o")
+$safeReportPrefix = if ([string]::IsNullOrWhiteSpace($ReportPrefix)) {
+    ''
+}
+else {
+    ConvertTo-AsBuiltSafeName -Value $ReportPrefix
+}
 
-# -----------------------------------------------------------------------
-# JSON INPUT MODE: load a previously collected file, skip live collection
-# -----------------------------------------------------------------------
-$isJsonInputMode = -not [string]::IsNullOrWhiteSpace($JsonInputPath)
-
-if ($isJsonInputMode) {
-    $jsonResolvedInput = Resolve-ExistingFilePath -Path $JsonInputPath
-    if ($null -eq $jsonResolvedInput) {
-        throw "JSON input file not found: $JsonInputPath"
-    }
-    Write-Host "JSON input mode: loading data from $jsonResolvedInput"
-    try {
-        $jsonText = Get-Content -LiteralPath $jsonResolvedInput -Raw -ErrorAction Stop
-        if ([string]::IsNullOrWhiteSpace($jsonText)) {
-            throw 'The file is empty.'
-        }
-        $asbuiltExport = ConvertFrom-Json -InputObject $jsonText -ErrorAction Stop
-    }
-    catch {
-        throw "Failed to load StorageGRID JSON input '$jsonResolvedInput': $($_.Exception.Message) Supply a non-empty JSON export created by this tool."
-    }
-    if ($null -eq $asbuiltExport -or $null -eq $asbuiltExport.PSObject.Properties['storagegrid_facts']) {
-        throw "JSON input does not contain StorageGRID collection data (missing 'storagegrid_facts'): $JsonInputPath"
-    }
-    $restQueryFailures = @()
-    $apiUrl = "(loaded from $([System.IO.Path]::GetFileName($jsonResolvedInput)))"
-
-    $gridLicenseObject = $asbuiltExport.storagegrid_facts.sg_grid_license
-    $reportSystemNameSource = "storagegrid"
-    $gridNameRaw = Get-PropertyValue -Object $gridLicenseObject -PropertyName "systemName"
-    if ([string]::IsNullOrWhiteSpace([string]$gridNameRaw)) {
-        $gridNameRaw = Get-PropertyValue -Object $gridLicenseObject -PropertyName "displayName"
-    }
-    if (-not [string]::IsNullOrWhiteSpace([string]$gridNameRaw)) {
-        $reportSystemNameSource = [string]$gridNameRaw
-    }
-    $reportSystemName = Convert-ToSafeName -Value $reportSystemNameSource
-    $reportBaseName = if ([string]::IsNullOrWhiteSpace($ReportPrefix)) {
-        "${reportSystemName}_${timestamp}"
-    } else {
-        "${ReportPrefix}_${reportSystemName}_${timestamp}"
-    }
-    $jsonPath  = $null   # no JSON output in JSON input mode
-    $mdPath    = Join-Path -Path $outputDirResolved -ChildPath "${reportBaseName}.md"
-    $docxPath  = Join-Path -Path $outputDirResolved -ChildPath "${reportBaseName}.docx"
-
-} else {
-    # -----------------------------------------------------------------------
-    # -----------------------------------------------------------------------
-    # LIVE COLLECTION MODE
-    # -----------------------------------------------------------------------
-    Set-TlsPolicy -ValidateCertificates $ValidateCerts.IsPresent
-    Set-ProxyPolicy -UseProxy $UseSystemProxy.IsPresent
-    $apiUrl = $Target
+Set-TlsPolicy -ValidateCertificates $ValidateCerts.IsPresent
+Set-ProxyPolicy -UseProxy $false
+$apiUrl = $Target
 
     Write-Host "Authenticating to StorageGRID Management API ..."
     $bearerToken = Get-StorageGridToken -BaseUrl $apiUrl -Credential $Credential
@@ -6066,12 +5807,6 @@ if ($santricityApplianceCandidates.Count -gt 0) {
         Write-Host ("  {0} ({1}): {2}" -f $candidate.NodeName, $candidate.ApplianceModel, ($candidate.CandidateIps -join ', '))
     }
 }
-$capacityDiagnostics = $null
-if ($ExportCapacityDiagnostics) {
-    Write-Host "Collecting focused capacity diagnostics ..."
-    $capacityDiagnostics = Get-StorageGridCapacityDiagnostics -BaseUrl $apiUrl -BearerToken $bearerToken -NodeHealth (Convert-ToArrayPayload -Payload $nodeHealthData.Data)
-}
-
 # Keys whose Data payloads are arrays that may need Convert-ToArrayPayload
 $arrayPayloadKeys = @(
     "grid_regions",
@@ -6216,36 +5951,19 @@ if ($restQueryFailures.Count -gt 0) {
         $reportSystemNameSource = [string]$gridNameRaw
     }
     $reportSystemName = Convert-ToSafeName -Value $reportSystemNameSource
-    $reportBaseName = if ([string]::IsNullOrWhiteSpace($ReportPrefix)) {
+    $reportBaseName = if ([string]::IsNullOrWhiteSpace($safeReportPrefix)) {
         "${reportSystemName}_${timestamp}"
     } else {
-        "${ReportPrefix}_${reportSystemName}_${timestamp}"
+        "${safeReportPrefix}_${reportSystemName}_${timestamp}"
     }
 
     $jsonPath  = Join-Path -Path $outputDirResolved -ChildPath "${reportBaseName}.json"
     $mdPath    = Join-Path -Path $outputDirResolved -ChildPath "${reportBaseName}.md"
     $docxPath  = Join-Path -Path $outputDirResolved -ChildPath "${reportBaseName}.docx"
-    $capacityDiagnosticsJsonPath = Join-Path -Path $outputDirResolved -ChildPath "${reportBaseName}_capacity-diagnostics.json"
-    $capacityDiagnosticsCsvPath  = Join-Path -Path $outputDirResolved -ChildPath "${reportBaseName}_capacity-diagnostics.csv"
-
     $asbuiltExport | ConvertTo-Json -Depth 100 | Set-Content -Path $jsonPath -Encoding UTF8
 
-    if ($ExportCapacityDiagnostics -and $null -ne $capacityDiagnostics) {
-        $capacityDiagnostics | ConvertTo-Json -Depth 20 | Set-Content -Path $capacityDiagnosticsJsonPath -Encoding UTF8
-        $capacityDiagnosticsFlatRows = Convert-StorageGridCapacityDiagnosticsToFlatRows -Diagnostics $capacityDiagnostics
-        $capacityDiagnosticsFlatRows | Export-Csv -NoTypeInformation -Path $capacityDiagnosticsCsvPath -Encoding UTF8
-        Write-Host "Capacity diagnostics JSON generated at: $capacityDiagnosticsJsonPath"
-        Write-Host "Capacity diagnostics CSV generated at: $capacityDiagnosticsCsvPath"
-    }
-
-    if ($CollectionOnly) {
-        Write-Host "Collection-only mode enabled. JSON export generated at: $jsonPath"
-        return
-    }
-} # end live-collection else block
-
 Write-Host "Rendering markdown report ..."
-Write-StorageGridMarkdown -Export $asbuiltExport -ApiUrl $apiUrl -Iso8601 $iso8601 -OutputPath $mdPath -RestQueryFailures $restQueryFailures -TitleFields $TitlePageFields -IncludeTitlePage ([bool]$DocxEnableTitlePage)
+Write-StorageGridMarkdown -Export $asbuiltExport -ApiUrl $apiUrl -Iso8601 $iso8601 -OutputPath $mdPath -RestQueryFailures $restQueryFailures -TitleFields $TitlePageFields -IncludeTitlePage $true
 
 $docxReferenceTemplate = Resolve-ExistingFilePath -Path ".\docx\reference-template.docx"
 
@@ -6335,7 +6053,7 @@ if ($santricityApplianceCandidates.Count -gt 0 -and $santricityDetectionEnabled)
             $gridName = [string](Get-PropertyValue -Object $responses["grid_license"].Data -PropertyName 'systemName')
             if ([string]::IsNullOrWhiteSpace($gridName)) { $gridName = 'storagegrid' }
             $santricityOutputDirectory = Join-Path -Path $outputDirResolved -ChildPath ("{0}_santricity_appliances" -f (Convert-ToSafeName -Value $gridName))
-            $santricityCollectionResults = Invoke-StorageGridSantricityApplianceCollection -Candidates $santricityApplianceCandidates -OutputDirectory $santricityOutputDirectory -WorkspaceRoot $WorkspaceRoot -SharedCredential $SantricityCredential -CredentialMap $credentialMap -ValidateCerts:$ValidateCerts -UseSystemProxy:$UseSystemProxy -KeepIntermediateOutputs:$KeepIntermediateOutputs -DocxEnableTitlePage:$DocxEnableTitlePage -CustomerName $CustomerName -CustomerLocation $CustomerLocation -ProjectName $ProjectName -TitlePageFields $TitlePageFields
+            $santricityCollectionResults = Invoke-StorageGridSantricityApplianceCollection -Candidates $santricityApplianceCandidates -OutputDirectory $santricityOutputDirectory -WorkspaceRoot $WorkspaceRoot -SharedCredential $SantricityCredential -CredentialMap $credentialMap -ValidateCerts:$ValidateCerts -KeepIntermediateOutputs:$KeepIntermediateOutputs -CustomerName $CustomerName -CustomerLocation $CustomerLocation -ProjectName $ProjectName
             $santricitySummaryPath = Join-Path -Path $santricityOutputDirectory -ChildPath 'santricity-collection-summary.json'
             [ordered]@{
                 GridName       = $gridName
@@ -6352,10 +6070,11 @@ if ($santricityApplianceCandidates.Count -gt 0 -and $santricityDetectionEnabled)
     }
 }
 
-if ($CleanupIntermediateOutputs -and -not $KeepIntermediateOutputs) {
+if (-not $KeepIntermediateOutputs) {
     $pathsToRemove = @()
     if (-not [string]::IsNullOrWhiteSpace($jsonPath)) { $pathsToRemove += $jsonPath }
     if (-not [string]::IsNullOrWhiteSpace($mdPath)) { $pathsToRemove += $mdPath }
+    if (-not [string]::IsNullOrWhiteSpace($santricitySummaryPath)) { $pathsToRemove += $santricitySummaryPath }
     if ($pathsToRemove.Count -gt 0) {
         Remove-Item -Path $pathsToRemove -Force -ErrorAction SilentlyContinue
     }

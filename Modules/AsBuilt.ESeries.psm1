@@ -8,76 +8,20 @@ param(
     [Parameter(Mandatory = $false)]
     [string]$Target,
 
-    # Used only with legacy host-only Target input; full URLs use their explicit port or 8443.
-    [Parameter(Mandatory = $false)]
-    [int]$Port = 8443,
-
-    [Parameter(Mandatory = $false)]
-    [string]$ApiUsername,
-
-    # Backward-compatible secure password input; -Credential is preferred.
-    [Parameter(Mandatory = $false)]
-    [System.Security.SecureString]$ApiPasswordSecure,
-
-    # Backward-compatible alias for legacy plain-text password input; -Credential is preferred.
-    [Parameter(Mandatory = $false)]
-    [Alias("ApiPassword")]
-    [string]$LegacyApiSecret,
-
     [Parameter(Mandatory = $false)]
     [System.Management.Automation.PSCredential]$Credential,
 
     [Parameter(Mandatory = $false)]
-    [string]$Ssid,
-
-    [Parameter(Mandatory = $false)]
-    [switch]$ValidateCerts,
-
-    [Parameter(Mandatory = $false)]
-    [switch]$UseSystemProxy,
+    [switch]$ValidateCerts = $true,
 
     [Parameter(Mandatory = $false)]
     [string]$OutputDir = ".\\asbuilt_output_eseries",
 
     [Parameter(Mandatory = $false)]
-    [switch]$CollectionOnly,
-
-    # Load previously collected JSON instead of running a live collection.
-    [Parameter(Mandatory = $false)]
-    [string]$JsonInputPath,
-
-    [Parameter(Mandatory = $false)]
     [string]$ReportPrefix = "",
 
     [Parameter(Mandatory = $false)]
-    [switch]$CleanupIntermediateOutputs,
-
-    [Parameter(Mandatory = $false)]
     [switch]$KeepIntermediateOutputs = $false,
-
-    [Parameter(Mandatory = $false)]
-    [switch]$EnableDocxToc,
-
-    [Parameter(Mandatory = $false)]
-    [int]$DocxTocDepth = 3,
-
-    [Parameter(Mandatory = $false)]
-    [switch]$EnableDocxNumberSections,
-
-    [Parameter(Mandatory = $false)]
-    [string]$DocxTableStyleName = "NetAppTable1",
-
-    [Parameter(Mandatory = $false)]
-    [string]$DocxTableHeaderParagraphStyle = "TableHeading",
-
-    [Parameter(Mandatory = $false)]
-    [string]$DocxTableBodyParagraphStyle = "TableText",
-
-    [Parameter(Mandatory = $false)]
-    [switch]$DocxTableAutofitToWindow,
-
-    [Parameter(Mandatory = $false)]
-    [switch]$DocxEnableTitlePage,
 
     [Parameter(Mandatory = $false)]
     [Alias("TitleCustomerName")]
@@ -92,12 +36,6 @@ param(
     [string]$ProjectName,
 
     [Parameter(Mandatory = $false)]
-    [hashtable]$TitlePageFields,
-
-    [Parameter(Mandatory = $false)]
-    [string]$TitlePageFieldsJson,
-
-    [Parameter(Mandatory = $false)]
     [switch]$PromptForTitlePageFields,
 
     [Parameter(Mandatory = $true)]
@@ -108,23 +46,25 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 Import-Module (Join-Path -Path $WorkspaceRoot -ChildPath 'Modules\AsBuilt.Common.psm1') -Force
 # ChangeLog:
+# 2026.10.15.7 - Removed the system-proxy input; preserve direct connection as the fixed proxy behavior.
+# 2026.10.15.6 - Removed JSON replay, collection-only, and user-supplied SSID inputs; always collect and render a live report.
+# 2026.10.15.5 - Removed structured title-page field inputs; retain named fields and prompting.
+# 2026.10.15.4 - Sanitize ReportPrefix before using it in generated report filenames.
+# 2026.10.15.3 - Removed legacy plaintext credential, Port, cleanup, and DOCX layout parameters; fixed report layout and default intermediate cleanup.
+# 2026.10.15.2 - Updated the reported E-Series script version.
+# 2026.10.15.1 - Enabled TLS certificate validation by default; allow explicit opt-out with -ValidateCerts:$false.
 # 2026.08.31.1 - Added actionable validation for JSON input and title-page JSON, and report-write failures now name the affected output path; collect_asbuilt.ps1 reports uncaught collection errors at the command boundary.
 # 2026.08.29.1 - Removed the stale w:dirty flag and added cached placeholder text on the TOC field so Word no longer prompts to update fields on open; relies on AsBuilt.Common.psm1 2026.08.29.1 for the accompanying UpdateFieldsOnOpen=false setting.
 # 2026.08.26.1 - Replaced Pandoc-based DOCX generation with a direct DocumentFormat.OpenXml SDK pipeline (Lib\OpenXml); no external DOCX conversion binary is required. Fixed title-page section header/footer/titlePg preservation and single-column table parsing, added selective hyperlink support for markdown [text](url) content, and removed all Pandoc-related code and dependencies.
-$ScriptVersion = "2026.08.31.1"
-
-if (-not $PSBoundParameters.ContainsKey('CleanupIntermediateOutputs')) {
-    $CleanupIntermediateOutputs = $true
-}
-if (-not $PSBoundParameters.ContainsKey('EnableDocxToc')) {
-    $EnableDocxToc = $true
-}
-if (-not $PSBoundParameters.ContainsKey('DocxTableAutofitToWindow')) {
-    $DocxTableAutofitToWindow = $true
-}
-if (-not $PSBoundParameters.ContainsKey('DocxEnableTitlePage')) {
-    $DocxEnableTitlePage = $true
-}
+$ScriptVersion = "2026.10.15.7"
+$EnableDocxToc = $true
+$DocxTocDepth = 3
+$EnableDocxNumberSections = $false
+$DocxTableStyleName = 'NetAppTable1'
+$DocxTableHeaderParagraphStyle = 'TableHeading'
+$DocxTableBodyParagraphStyle = 'TableText'
+$DocxTableAutofitToWindow = $true
+$DocxEnableTitlePage = $true
 
 Write-Host "PowerShell Script Version: $ScriptVersion"
 
@@ -2450,28 +2390,6 @@ function Write-EseriesMarkdown {
     }
 }
 
-function ConvertTo-Hashtable {
-    param([Parameter(Mandatory = $true)]$InputObject)
-
-    if ($null -eq $InputObject) {
-        return @{}
-    }
-
-    if ($InputObject -is [hashtable]) {
-        return $InputObject
-    }
-
-    if ($InputObject -is [pscustomobject]) {
-        $ht = @{}
-        foreach ($p in $InputObject.PSObject.Properties) {
-            $ht[$p.Name] = $p.Value
-        }
-        return $ht
-    }
-
-    return @{}
-}
-
 function Invoke-EseriesApi {
     param(
         [Parameter(Mandatory = $true)][string]$BaseUrl,
@@ -2529,55 +2447,13 @@ function Invoke-EseriesApi {
     }
 }
 
-$isJsonInputMode = -not [string]::IsNullOrWhiteSpace($JsonInputPath)
-$asbuiltExport = $null
 $restQueryFailures = @()
-$jsonResolvedInput = $null
-
-if ($isJsonInputMode) {
-    $jsonResolvedInput = Resolve-ExistingFilePath -Path $JsonInputPath
-    if ($null -eq $jsonResolvedInput) {
-        throw "JSON input file not found: $JsonInputPath"
-    }
-    Write-Host "JSON input mode: loading data from $jsonResolvedInput"
-    try {
-        $jsonText = Get-Content -LiteralPath $jsonResolvedInput -Raw -ErrorAction Stop
-        if ([string]::IsNullOrWhiteSpace($jsonText)) {
-            throw 'The file is empty.'
-        }
-        $asbuiltExport = ConvertFrom-Json -InputObject $jsonText -ErrorAction Stop
-    }
-    catch {
-        throw "Failed to load E-Series JSON input '$jsonResolvedInput': $($_.Exception.Message) Supply a non-empty JSON export created by this tool."
-    }
-    if ($null -eq $asbuiltExport -or $null -eq $asbuiltExport.PSObject.Properties['storage_array_facts']) {
-        throw "JSON input does not contain E-Series collection data (missing 'storage_array_facts'): $JsonInputPath"
-    }
+if ([string]::IsNullOrWhiteSpace($Target)) {
+    $Target = Read-Host "Enter the E-Series Web Services target including its port (e.g. santricity.example.com:8443 or https://santricity.example.com:8443)"
 }
 
-if (-not $isJsonInputMode -and [string]::IsNullOrWhiteSpace($Target)) {
-    $Target = Read-Host "Enter the E-Series Web Services target (e.g. santricity.example.com, santricity.example.com:8443, or https://santricity.example.com)"
-}
-
-if (-not $isJsonInputMode -and $null -eq $Credential) {
-    $resolvedApiPassword = $null
-    if ($ApiPasswordSecure -is [System.Security.SecureString]) {
-        $resolvedApiPassword = $ApiPasswordSecure
-    }
-    elseif (-not [string]::IsNullOrWhiteSpace($LegacyApiSecret)) {
-        $resolvedApiPassword = ConvertTo-SecureString -String $LegacyApiSecret -AsPlainText -Force
-    }
-
-    if (-not [string]::IsNullOrWhiteSpace($ApiUsername) -and $null -ne $resolvedApiPassword) {
-        Write-Warning "ApiUsername/ApiPassword parameters are a legacy fallback and may expose secrets in shell history. Prefer -Credential or interactive Get-Credential prompt."
-        $Credential = New-Object System.Management.Automation.PSCredential(
-            $ApiUsername,
-            $resolvedApiPassword
-        )
-    }
-    else {
-        $Credential = Get-Credential -Message "Enter E-Series API credentials"
-    }
+if ($null -eq $Credential) {
+    $Credential = Get-Credential -Message "Enter E-Series API credentials"
 }
 
 if ($PromptForTitlePageFields) {
@@ -2596,22 +2472,6 @@ if ($null -eq $TitlePageFields) {
     $TitlePageFields = @{}
 }
 
-if (-not [string]::IsNullOrWhiteSpace($TitlePageFieldsJson)) {
-    try {
-        $parsed = ConvertFrom-Json -InputObject $TitlePageFieldsJson -ErrorAction Stop
-    }
-    catch {
-        throw "TitlePageFieldsJson is not valid JSON: $($_.Exception.Message) Supply a JSON object that maps field names to values."
-    }
-    $parsedFields = ConvertTo-Hashtable -InputObject $parsed
-    if ($parsedFields.Count -eq 0) {
-        throw 'TitlePageFieldsJson must contain a JSON object with one or more field/value pairs.'
-    }
-    foreach ($k in $parsedFields.Keys) {
-        $TitlePageFields[$k] = $parsedFields[$k]
-    }
-}
-
 if (-not [string]::IsNullOrWhiteSpace($CustomerName)) {
     $TitlePageFields["<<CUSTOMER_NAME>>"] = $CustomerName
 }
@@ -2628,45 +2488,34 @@ Initialize-Path -Path $outputDirResolved
 $timestamp = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmss")
 $iso8601 = (Get-Date).ToUniversalTime().ToString("o")
 
-if ($isJsonInputMode) {
-    $apiUrl = "(loaded from $([System.IO.Path]::GetFileName($jsonResolvedInput)))"
-    $storageSystemData = Get-PropertyValue -Object $asbuiltExport.storage_array_facts -PropertyName 'netapp_storage_systems_details'
-    $responses = @{
-        storage_systems = [pscustomobject]@{ Data = $storageSystemData }
-    }
-    if ([string]::IsNullOrWhiteSpace($Ssid)) {
-        $Ssid = 'Loaded from JSON'
-    }
-}
-else {
-    # Default bare host or host:port input to HTTPS; retain an explicit HTTP or HTTPS scheme.
-    $Target = $Target.Trim().TrimEnd('/')
-    if ($Target -notmatch '^[a-zA-Z][a-zA-Z0-9+.-]*://') {
-        $Target = "https://$Target"
-    }
-    try {
-        $targetUri = [uri]$Target
-    }
-    catch {
-        throw "Invalid E-Series Web Services target: $Target"
-    }
-    if ($targetUri.Scheme -notin @('http', 'https')) {
-        throw "E-Series Web Services target must use HTTP or HTTPS: $Target"
-    }
-    if (-not [string]::IsNullOrWhiteSpace($targetUri.Query) -or -not [string]::IsNullOrWhiteSpace($targetUri.Fragment)) {
-        throw "E-Series Web Services target must not include a query string or fragment: $Target"
-    }
-    if ($targetUri.AbsolutePath -notin @('/', '/devmgr/v2', '/devmgr/v2/')) {
-        throw "E-Series Web Services target must be the server root or /devmgr/v2: $Target"
-    }
+ # Default bare host or host:port input to HTTPS; retain an explicit HTTP or HTTPS scheme.
+ $Target = $Target.Trim().TrimEnd('/')
+ if ($Target -notmatch '^[a-zA-Z][a-zA-Z0-9+.-]*://') {
+     $Target = "https://$Target"
+ }
+ try {
+     $targetUri = [uri]$Target
+ }
+ catch {
+     throw "Invalid E-Series Web Services target: $Target"
+ }
+ if ($targetUri.Scheme -notin @('http', 'https')) {
+     throw "E-Series Web Services target must use HTTP or HTTPS: $Target"
+ }
+ if (-not [string]::IsNullOrWhiteSpace($targetUri.Query) -or -not [string]::IsNullOrWhiteSpace($targetUri.Fragment)) {
+     throw "E-Series Web Services target must not include a query string or fragment: $Target"
+ }
+ if ($targetUri.AbsolutePath -notin @('/', '/devmgr/v2', '/devmgr/v2/')) {
+     throw "E-Series Web Services target must be the server root or /devmgr/v2: $Target"
+ }
 
-    $authority = if ($targetUri.HostNameType -eq [System.UriHostNameType]::IPv6) { "[$($targetUri.Host)]" } else { $targetUri.Host }
-    $hasExplicitUrlPort = $Target -match '^[a-zA-Z][a-zA-Z0-9+.-]*://(?:\[[^\]]+\]|[^/:]+):\d+(?:/|$)'
-    $resolvedPort = if ($hasExplicitUrlPort) { $targetUri.Port } elseif ($PSBoundParameters.ContainsKey('Port')) { $Port } else { 8443 }
-    $apiUrl = "{0}://{1}:{2}/devmgr/v2" -f $targetUri.Scheme, $authority, $resolvedPort
-    Set-TlsPolicy -ValidateCertificates $ValidateCerts.IsPresent
-    Set-ProxyPolicy -UseProxy $UseSystemProxy.IsPresent
-    $authorizationHeader = New-BasicAuthHeader -Credential $Credential
+ $authority = if ($targetUri.HostNameType -eq [System.UriHostNameType]::IPv6) { "[$($targetUri.Host)]" } else { $targetUri.Host }
+ $hasExplicitUrlPort = $Target -match '^[a-zA-Z][a-zA-Z0-9+.-]*://(?:\[[^\]]+\]|[^/:]+):\d+(?:/|$)'
+ $resolvedPort = if ($hasExplicitUrlPort) { $targetUri.Port } else { 8443 }
+ $apiUrl = "{0}://{1}:{2}/devmgr/v2" -f $targetUri.Scheme, $authority, $resolvedPort
+ Set-TlsPolicy -ValidateCertificates $ValidateCerts.IsPresent
+ Set-ProxyPolicy -UseProxy $false
+ $authorizationHeader = New-BasicAuthHeader -Credential $Credential
 
 Write-Host "Querying /storage-systems ..."
 $storageSystemsResp = Invoke-EseriesApi -BaseUrl $apiUrl -Endpoint "/storage-systems" -Credential $Credential -AuthorizationHeader $authorizationHeader -AcceptHeader "application/json"
@@ -2676,6 +2525,7 @@ if ($storageSystemsResp.Failed) {
     throw "E-Series storage-system inventory failed ($statusText): $($storageSystemsResp.Message)"
 }
 
+$Ssid = $null
 if ([string]::IsNullOrWhiteSpace($Ssid)) {
     if (-not $storageSystemsResp.Failed -and $null -ne $storageSystemsResp.Data) {
         if ($storageSystemsResp.Data -is [array] -and $storageSystemsResp.Data.Count -gt 0 -and $storageSystemsResp.Data[0].id) {
@@ -2860,8 +2710,6 @@ if ($restQueryFailures.Count -gt 0) {
     Write-Warning "One or more REST endpoint queries failed; affected report sections may show N/A."
     $restQueryFailures | Format-Table -AutoSize | Out-String | Write-Host
 }
-} # end live collection
-
 $storageSystemObject = $responses["storage_systems"].Data
 $reportSystemNameSource = "unknown"
 if ($storageSystemObject -is [array] -and $storageSystemObject.Count -gt 0) {
@@ -2884,31 +2732,25 @@ elseif ($null -ne $storageSystemObject -and $null -ne $storageSystemObject.PSObj
     $reportSystemNameSource = [string]$storageSystemObject.PSObject.Properties["name"].Value
 }
 $reportSystemName = Convert-ToSafeName -Value $reportSystemNameSource
+$safeReportPrefix = if ([string]::IsNullOrWhiteSpace($ReportPrefix)) {
+    ''
+}
+else {
+    ConvertTo-AsBuiltSafeName -Value $ReportPrefix
+}
 
-$reportBaseName = if ([string]::IsNullOrWhiteSpace($ReportPrefix)) {
+$reportBaseName = if ([string]::IsNullOrWhiteSpace($safeReportPrefix)) {
     "${reportSystemName}_${timestamp}"
 }
 else {
-    "${ReportPrefix}_${reportSystemName}_${timestamp}"
+    "${safeReportPrefix}_${reportSystemName}_${timestamp}"
 }
 
-$jsonPath = if ($isJsonInputMode) { $null } else { Join-Path -Path $outputDirResolved -ChildPath "${reportBaseName}.json" }
+$jsonPath = Join-Path -Path $outputDirResolved -ChildPath "${reportBaseName}.json"
 $mdPath = Join-Path -Path $outputDirResolved -ChildPath "${reportBaseName}.md"
 $docxPath = Join-Path -Path $outputDirResolved -ChildPath "${reportBaseName}.docx"
 
-if (-not $isJsonInputMode) {
-    $asbuiltExport | ConvertTo-Json -Depth 100 | Set-Content -Path $jsonPath -Encoding UTF8
-}
-
-if ($CollectionOnly) {
-    if ($isJsonInputMode) {
-        Write-Host "Collection-only mode has no effect when using -JsonInputPath."
-    }
-    else {
-        Write-Host "Collection-only mode enabled. JSON export generated at: $jsonPath"
-    }
-    return
-}
+$asbuiltExport | ConvertTo-Json -Depth 100 | Set-Content -Path $jsonPath -Encoding UTF8
 
 Write-Host "Rendering markdown report ..."
 Write-EseriesMarkdown -Export $asbuiltExport -ApiUrl $apiUrl -Ssid $Ssid -Iso8601 $iso8601 -OutputPath $mdPath -RestQueryFailures $restQueryFailures -TitleFields $TitlePageFields -IncludeTitlePage ([bool]$DocxEnableTitlePage)
@@ -2958,7 +2800,7 @@ Set-DocxMetadataProperties `
 
 Set-DocxTableStyle -DocxPath $docxPath -TableStyleId $DocxTableStyleName -HeaderParagraphStyle $DocxTableHeaderParagraphStyle -BodyParagraphStyle $DocxTableBodyParagraphStyle -AutofitToWindow ([bool]$DocxTableAutofitToWindow)
 
-if ($CleanupIntermediateOutputs -and -not $KeepIntermediateOutputs) {
+if (-not $KeepIntermediateOutputs) {
     $pathsToRemove = @($mdPath)
     if (-not [string]::IsNullOrWhiteSpace($jsonPath)) { $pathsToRemove += $jsonPath }
     Remove-Item -Path $pathsToRemove -Force -ErrorAction SilentlyContinue

@@ -20,33 +20,32 @@ Get-ChildItem -Path ".\" -Recurse | Unblock-File
 ## Basic Usage
 
 ```powershell
-.\collect_asbuilt.ps1 -Platform StorageGRID -Target "sg-admin-node.example.com"
-.\collect_asbuilt.ps1 -Platform ESeries -Target "santricity.example.com"
+.\collect_asbuilt.ps1 -Platform StorageGRID -Target "https://sg-admin-node.example.com:443"
+.\collect_asbuilt.ps1 -Platform ESeries -Target "https://santricity.example.com:8443"
 ```
 
-For StorageGRID, a bare hostname or an HTTPS URL without a port uses the default Grid Manager HTTPS/TCP port 443:
+Include the management HTTPS port in every live `-Target`. StorageGRID commonly uses port 443; E-Series/SANtricity commonly uses port 8443:
 
 ```powershell
-.\collect_asbuilt.ps1 -Platform StorageGRID -Target "sg-admin-node.example.com"
-.\collect_asbuilt.ps1 -Platform StorageGRID -Target "https://sg-admin-node.example.com"
+.\collect_asbuilt.ps1 -Platform StorageGRID -Target "https://sg-admin-node.example.com:443"
+.\collect_asbuilt.ps1 -Platform ESeries -Target "https://santricity.example.com:8443"
 ```
 
-If the Grid Manager uses a custom port, include that port in `-Target`:
+For custom ports, place the port directly in the target URL:
 
 ```powershell
 .\collect_asbuilt.ps1 -Platform StorageGRID -Target "https://sg-admin-node.example.com:8443"
+.\collect_asbuilt.ps1 -Platform ESeries -Target "https://santricity.example.com:9443"
 ```
 
-StorageGRID does not use the `-Port` parameter; custom StorageGRID ports belong in the target URL. E-Series defaults to port 8443 and supports the E-Series-specific `-Port` parameter.
-
-Use `-Credential` for secure authentication; otherwise live collection prompts for credentials.
+Use `-Credential` with a `PSCredential` or enter credentials at the interactive prompt. Password string parameters are not supported.
 
 ### Verbose Diagnostics
 
 Use PowerShell's common `-Verbose` parameter when troubleshooting a collection:
 
 ```powershell
-.\collect_asbuilt.ps1 -Platform StorageGRID -Target "sg-admin-node.example.com" -Verbose
+.\collect_asbuilt.ps1 -Platform StorageGRID -Target "https://sg-admin-node.example.com:443" -Verbose
 ```
 
 Normal output shows authentication, high-level collection progress, report generation, output paths, and actionable warnings or failures. Detailed API and appliance-attribute diagnostics, including requests for data that is unavailable on a particular node, are suppressed by default and are shown with `-Verbose`.
@@ -58,7 +57,7 @@ The output as-built documents are created in the locations below.
 - StorageGRID: `.\asbuilt_output_storagegrid`
 - E-Series: `.\asbuilt_output_eseries`
 
-Use `-KeepIntermediateOutputs` when troubleshooting or retaining source JSON/Markdown. Otherwise successful reports clean intermediate files according to the effective cleanup setting.
+By default, successful report generation removes intermediate JSON, Markdown, and collection-summary files, leaving the DOCX reports. Use `-KeepIntermediateOutputs` to retain these generated files alongside the DOCX reports.
 
 Once generated, open the report(s) and refresh the table of contents (TOC) to complete it's generation. A placeholder TOC is generated that must be manually updated and does not automatically refresh. This decision was made as refreshing the TOC triggers a safety warning in Microsoft Word that may cause confusion when opening the report for the first time (this is a default Word action in these circumstances and not due to safety concerns with the reports).
 
@@ -97,7 +96,7 @@ Credentials entered interactively remain in memory for the run and are not writt
 
 ```powershell
 $credential = Get-Credential -Message "SANtricity credentials"
-.\collect_asbuilt.ps1 -Platform StorageGRID -Target "sg-admin-node.example.com" -CollectSantricityAppliances -SantricityCredential $credential
+.\collect_asbuilt.ps1 -Platform StorageGRID -Target "https://sg-admin-node.example.com:443" -CollectSantricityAppliances -SantricityCredential $credential
 ```
 
 ### Per-Appliance CLIXML Map
@@ -116,7 +115,7 @@ Use it with unattended forced collection:
 ```powershell
 .\collect_asbuilt.ps1 `
     -Platform StorageGRID `
-    -Target "sg-admin-node.example.com" `
+    -Target "https://sg-admin-node.example.com:443" `
     -CollectSantricityAppliances `
     -NonInteractive `
     -SantricityAuthMapPath .\santricity-auth-map.clixml
@@ -132,28 +131,23 @@ Per-appliance reports are written below:
 .\asbuilt_output_storagegrid\<grid-name>_santricity_appliances\
 ```
 
-Each successful appliance produces JSON, Markdown, and DOCX files (only the DOCX file is retained unless the -KeepIntermediateOutputs attributes is provided).
+Each successful appliance produces a DOCX report. JSON and Markdown intermediates are removed by default and retained with `-KeepIntermediateOutputs`.
 
-The directory also contains `santricity-collection-summary.json`, including node name, candidate IPs, selected IP, status, credential-map key, and error details. A failed appliance does not stop the remaining collections.
+With `-KeepIntermediateOutputs`, the directory also retains `santricity-collection-summary.json`, including node name, candidate IPs, selected IP, status, credential-map key, and error details. A failed appliance does not stop the remaining collections.
 
 ## Parameters
 
 ### Common
 
-- `-Target`: host, host:port, or URL.
+- `-Target`: host:port or URL with an explicit port, such as `https://sg-admin-node.example.com:443` or `https://santricity.example.com:8443`.
 - `-Credential`: secure `PSCredential` for live collection.
-- `-ValidateCerts`: enable normal TLS certificate validation.
-- `-UseSystemProxy`: use the system proxy.
+- TLS certificate validation is enabled by default. To bypass it for a collection using a known untrusted or self-signed certificate, explicitly pass `-ValidateCerts:$false`. This disables certificate verification and is not recommended outside a trusted network.
 - `-OutputDir`: output directory.
-- `-CollectionOnly`: write collection JSON and stop before report rendering.
-- `-JsonInputPath`: replay an existing platform JSON export without API calls.
 - `-ReportPrefix`: prefix generated filenames.
-- `-KeepIntermediateOutputs`: retain JSON and Markdown sources after DOCX generation. These files are removed after execution by default.
-- `-CleanupIntermediateOutputs`: cleanup is enabled by effective default unless explicitly bound.
+- `-KeepIntermediateOutputs`: retain generated JSON, Markdown, and collection summaries after DOCX generation. They are removed after successful report generation by default.
 
 ### StorageGRID
 
-- `-ExportCapacityDiagnostics`: write focused capacity diagnostics JSON and CSV.
 - `-CollectSantricityAppliances`: tri-state appliance collection control.
 - `-NonInteractive`: suppress prompts.
 - `-SantricityCredential`: shared SANtricity credential.
@@ -161,10 +155,7 @@ The directory also contains `santricity-collection-summary.json`, including node
 
 ### E-Series
 
-- `-Port`: default port for host-only targets, normally `8443`.
-- `-Ssid`: storage-system ID; auto-detected when possible, otherwise required interactively.
-
-Both platforms support DOCX formatting and title-page parameters including `-EnableDocxToc`, `-DocxEnableTitlePage`, `-CustomerName`, `-CustomerLocation`, and `-ProjectName`.
+The DOCX layout and styles are fixed. Optional title-page values can be supplied with `-CustomerName`, `-CustomerLocation`, and `-ProjectName`. Use `-PromptForTitlePageFields` to prompt for any of those values not supplied as parameters.
 
 ## Support Files
 
